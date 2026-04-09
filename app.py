@@ -8,14 +8,33 @@ st.title("🏭 Simulation P10 avec contraintes")
 # PARAMÈTRES
 # =============================
 
-start_time = datetime(2024, 1, 1, 4, 52)
-end_time = datetime(2024, 1, 1, 21, 45)
+st.sidebar.header("Paramètres")
+
+jour = st.sidebar.selectbox(
+    "Jour",
+    ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]
+)
 
 NB_BRAS = 4
 MAX_WAIT = 20  # minutes
 
+# Heures de départ selon jour
+if jour == "Lundi":
+    start_time = datetime(2024, 1, 1, 6, 25)
+else:
+    start_time = datetime(2024, 1, 1, 4, 52)
+
+end_time = datetime(2024, 1, 1, 21, 45)
+
 CLOISON = {"four": 35, "cool": 45, "deco": 40}
 CUVE = {"four": 45, "cool": 46, "deco": 60}
+
+# =============================
+# FORMAT HEURE
+# =============================
+
+def format_time(dt):
+    return dt.strftime("%H:%M")
 
 # =============================
 # SIMULATION
@@ -27,7 +46,6 @@ def simulate_day():
     deco_available = start_time
 
     results = []
-
     first_cycle = True
 
     while True:
@@ -39,13 +57,9 @@ def simulate_day():
             if current_time >= end_time:
                 return pd.DataFrame(results)
 
-            # alternance cloison / cuve
             for prod in ["cloison", "cuve"]:
 
-                if prod == "cloison":
-                    t = CLOISON
-                else:
-                    t = CUVE
+                t = CLOISON if prod == "cloison" else CUVE
 
                 # FOUR
                 four_time = t["four"] + (2 if first_cycle else 0)
@@ -54,21 +68,20 @@ def simulate_day():
                 # REFROIDISSEMENT
                 end_cool = end_four + timedelta(minutes=t["cool"])
 
-                # DÉCOFFRAGE (goulot)
+                # DÉCOFFRAGE
                 start_deco = max(end_cool, deco_available)
                 wait = (start_deco - end_cool).total_seconds() / 60
 
-                # 👉 BY-PASS si attente trop grande
+                # BY-PASS si attente trop grande
                 if wait > MAX_WAIT:
                     results.append({
-                        "bras": bras,
-                        "type": "BYPASS",
-                        "start": current_time,
-                        "end": current_time,
-                        "wait": wait
+                        "Bras": bras + 1,
+                        "Type": "BYPASS",
+                        "Début": format_time(current_time),
+                        "Fin": format_time(current_time),
+                        "Attente (min)": round(wait, 1)
                     })
 
-                    # on avance juste le bras (simulation passage vide)
                     bras_times[bras] = current_time + timedelta(minutes=5)
                     break
 
@@ -78,17 +91,15 @@ def simulate_day():
                     return pd.DataFrame(results)
 
                 results.append({
-                    "bras": bras,
-                    "type": prod,
-                    "start": current_time,
-                    "end": end_deco,
-                    "wait": wait
+                    "Bras": bras + 1,
+                    "Type": prod.capitalize(),
+                    "Début": format_time(current_time),
+                    "Fin": format_time(end_deco),
+                    "Attente (min)": round(wait, 1)
                 })
 
-                # update ressources
                 deco_available = end_deco
                 current_time = end_four
-
                 bras_times[bras] = current_time
 
                 first_cycle = False
@@ -107,15 +118,21 @@ df = simulate_day()
 
 st.subheader("📊 KPI")
 
+nb_pieces = len(df[df["Type"] != "BYPASS"])
+nb_bypass = len(df[df["Type"] == "BYPASS"])
+max_wait = df["Attente (min)"].max() if not df.empty else 0
+
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Total pièces", len(df[df["type"] != "BYPASS"]))
-col2.metric("By-pass", len(df[df["type"] == "BYPASS"]))
-col3.metric("Attente max", int(df["wait"].max()))
+col1.metric("Production totale", f"{nb_pieces} pièces")
+col2.metric("By-pass", f"{nb_bypass} cycles")
+col3.metric("Attente max", f"{int(max_wait)} min")
 
 # =============================
 # TABLE
 # =============================
+
+st.subheader("📋 Planning")
 
 st.dataframe(df)
 
@@ -123,11 +140,11 @@ st.dataframe(df)
 # ALERTES
 # =============================
 
-st.subheader("🚨 Risques")
+st.subheader("🚨 Qualité")
 
-risk_df = df[df["wait"] > MAX_WAIT]
+risk_df = df[df["Attente (min)"] > MAX_WAIT]
 
 if len(risk_df) > 0:
-    st.error(f"{len(risk_df)} pièces en risque")
+    st.error(f"{len(risk_df)} pièces à risque (> {MAX_WAIT} min)")
 else:
     st.success("Aucun risque qualité")
