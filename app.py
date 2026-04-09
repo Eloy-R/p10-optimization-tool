@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
 
-st.title("🏭 Simulation P10 (mode réel)")
+st.title("🏭 Simulation P10 - Carrousel réel (événementiel)")
 
 # =============================
 # PARAMÈTRES
@@ -16,6 +16,7 @@ jour = st.sidebar.selectbox(
 )
 
 MAX_WAIT = 20  # minutes
+MOVE_TIME = 15  # secondes carrousel
 
 # Heures
 if jour == "Lundi":
@@ -26,7 +27,7 @@ else:
 end_time = datetime(2024, 1, 1, 21, 45)
 
 # =============================
-# CONFIG BRAS (IMPORTANT)
+# CONFIG BRAS
 # =============================
 
 BRAS_CONFIG = {
@@ -42,89 +43,94 @@ TIMES = {
 }
 
 # =============================
-# FORMAT HEURE
+# FORMAT
 # =============================
 
 def format_time(dt):
-    return dt.strftime("%H:%M")
+    return dt.strftime("%H:%M:%S")
 
 # =============================
 # SIMULATION
 # =============================
 
-def simulate_day():
+def simulate():
 
-    bras_times = {b: start_time for b in BRAS_CONFIG}
+    current_time = start_time
+
+    bras_next_event = {
+        b: start_time for b in BRAS_CONFIG
+    }
+
     deco_available = start_time
-
     events = []
+
     first_cycle = True
 
-    while True:
+    while current_time < end_time:
 
-        for bras in BRAS_CONFIG:
+        # 🔥 trouver le prochain événement (sortie four)
+        next_bras = min(bras_next_event, key=bras_next_event.get)
+        current_time = bras_next_event[next_bras]
 
-            current_time = bras_times[bras]
+        if current_time >= end_time:
+            break
 
-            if current_time >= end_time:
-                return pd.DataFrame(events).sort_values("Start_real")
+        prod = BRAS_CONFIG[next_bras]
+        t = TIMES[prod]
 
-            prod = BRAS_CONFIG[bras]
-            t = TIMES[prod]
+        # FOUR
+        four_time = t["four"] + (2 if first_cycle else 0)
+        end_four = current_time + timedelta(minutes=four_time)
 
-            # FOUR
-            four_time = t["four"] + (2 if first_cycle else 0)
-            end_four = current_time + timedelta(minutes=four_time)
+        # COOL
+        end_cool = end_four + timedelta(minutes=t["cool"])
 
-            # COOL
-            end_cool = end_four + timedelta(minutes=t["cool"])
+        # DECO
+        start_deco = max(end_cool, deco_available)
+        wait = (start_deco - end_cool).total_seconds() / 60
 
-            # DECO (goulot)
-            start_deco = max(end_cool, deco_available)
-            wait = (start_deco - end_cool).total_seconds() / 60
-
-            # BYPASS si problème
-            if wait > MAX_WAIT:
-                events.append({
-                    "Bras": bras,
-                    "Type": "BYPASS",
-                    "Start_real": current_time,
-                    "Début": format_time(current_time),
-                    "Fin": format_time(current_time),
-                    "Attente (min)": round(wait, 1)
-                })
-
-                bras_times[bras] += timedelta(minutes=5)
-                continue
-
-            end_deco = start_deco + timedelta(minutes=t["deco"])
-
-            if end_deco > end_time:
-                return pd.DataFrame(events).sort_values("Start_real")
-
+        # BYPASS
+        if wait > MAX_WAIT:
             events.append({
-                "Bras": bras,
-                "Type": prod.capitalize(),
-                "Start_real": current_time,
+                "Bras": next_bras,
+                "Type": "BYPASS",
                 "Début": format_time(current_time),
-                "Fin": format_time(end_deco),
+                "Fin": format_time(current_time),
                 "Attente (min)": round(wait, 1)
             })
 
-            deco_available = end_deco
+            # on retente au prochain cycle
+            bras_next_event[next_bras] += timedelta(seconds=MOVE_TIME)
+            continue
 
-            # IMPORTANT : le bras avance selon le four (car carrousel)
-            bras_times[bras] = end_four
+        end_deco = start_deco + timedelta(minutes=t["deco"])
 
-            first_cycle = False
+        if end_deco > end_time:
+            break
 
-    return pd.DataFrame(events).sort_values("Start_real")
+        events.append({
+            "Bras": next_bras,
+            "Type": prod.capitalize(),
+            "Début": format_time(current_time),
+            "Fin": format_time(end_deco),
+            "Attente (min)": round(wait, 1)
+        })
+
+        deco_available = end_deco
+
+        # 🔁 mouvement carrousel (TOUS les bras)
+        for b in bras_next_event:
+            bras_next_event[b] += timedelta(seconds=MOVE_TIME)
+
+        first_cycle = False
+
+    return pd.DataFrame(events)
 
 # =============================
 # RUN
 # =============================
 
-df = simulate_day()
+df = simulate()
 
 # =============================
 # KPI
@@ -143,23 +149,9 @@ col2.metric("By-pass", f"{nb_bypass}")
 col3.metric("Attente max", f"{int(max_wait)} min")
 
 # =============================
-# TABLE ORDONNÉE
+# TABLE
 # =============================
 
-st.subheader("📋 Ordre de passage réel")
+st.subheader("📋 Flux réel")
 
-df_display = df.drop(columns=["Start_real"])
-st.dataframe(df_display)
-
-# =============================
-# ALERTES
-# =============================
-
-st.subheader("🚨 Qualité")
-
-risk_df = df[df["Attente (min)"] > MAX_WAIT]
-
-if len(risk_df) > 0:
-    st.error(f"{len(risk_df)} pièces à risque")
-else:
-    st.success("Aucun risque qualité")
+st.dataframe(df)
