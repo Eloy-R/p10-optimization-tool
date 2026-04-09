@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
 
-st.title("🏭 P10 - Flux par bras (version claire)")
+st.title("🏭 P10 - Simulation Rotomoulage")
 
 # =============================
 # PARAMÈTRES
@@ -15,29 +15,29 @@ jour = st.sidebar.selectbox(
     ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]
 )
 
-# Heure de départ
+sequence_type = st.sidebar.selectbox(
+    "Séquence",
+    ["Cloison → Cuve", "Cuve → Cloison"]
+)
+
+# Heure départ
 if jour == "Lundi":
-    start_time = datetime(2024, 1, 1, 6, 25)
+    current_time = datetime(2024, 1, 1, 6, 25)
 else:
-    start_time = datetime(2024, 1, 1, 4, 52)
+    current_time = datetime(2024, 1, 1, 4, 52)
 
 end_time = datetime(2024, 1, 1, 21, 45)
 
 # =============================
-# CONFIG BRAS
+# TEMPS PROCESS
 # =============================
 
-BRAS_CONFIG = {
-    1: "cuve",
-    2: "cloison",
-    3: "cuve",
-    4: "cloison"
+TIMES = {
+    "cuve": {"four": 45, "cool": 46, "deco": 60},
+    "cloison": {"four": 35, "cool": 45, "deco": 40}
 }
 
-TIMES = {
-    "cuve": {"four": 45, "cool1": 20, "cool2": 26, "buffer": 5, "deco": 60},
-    "cloison": {"four": 35, "cool1": 20, "cool2": 25, "buffer": 5, "deco": 40}
-}
+MOVE = timedelta(seconds=15)
 
 # =============================
 # FORMAT
@@ -47,57 +47,62 @@ def f(t):
     return t.strftime("%H:%M")
 
 # =============================
-# SIMULATION SIMPLE PAR BRAS
+# SIMULATION
 # =============================
 
 def simulate():
 
     rows = []
+    deco_available = current_time
 
-    for bras in BRAS_CONFIG:
+    first_cycle = True
 
-        current_time = start_time
-        prod = BRAS_CONFIG[bras]
+    if sequence_type == "Cloison → Cuve":
+        seq = ["cloison", "cuve"]
+    else:
+        seq = ["cuve", "cloison"]
+
+    i = 0
+
+    while current_time < end_time:
+
+        prod = seq[i % 2]
         t = TIMES[prod]
 
-        first_cycle = True
+        # FOUR
+        four_time = t["four"] + (2 if first_cycle else 0)
+        start_four = current_time
+        end_four = start_four + timedelta(minutes=four_time)
 
-        while current_time < end_time:
+        # REFROID
+        end_cool = end_four + timedelta(minutes=t["cool"])
 
-            # FOUR
-            four_time = t["four"] + (2 if first_cycle else 0)
-            four_start = current_time
-            four_end = four_start + timedelta(minutes=four_time)
+        # ZONE LATENTE
+        start_deco = max(end_cool, deco_available)
+        wait = (start_deco - end_cool).total_seconds() / 60
 
-            # REFROID 1
-            cool1_end = four_end + timedelta(minutes=t["cool1"])
+        # DECOFFRAGE
+        end_deco = start_deco + timedelta(minutes=t["deco"])
 
-            # REFROID 2
-            cool2_end = cool1_end + timedelta(minutes=t["cool2"])
+        if end_deco > end_time:
+            break
 
-            # TAMPON
-            buffer_end = cool2_end + timedelta(minutes=t["buffer"])
+        rows.append({
+            "Produit": prod.capitalize(),
+            "Entrée four": f(start_four),
+            "Sortie four": f(end_four),
+            "Fin refroid": f(end_cool),
+            "Début décoffrage": f(start_deco),
+            "Fin décoffrage": f(end_deco),
+            "Attente (min)": round(wait, 1)
+        })
 
-            # DECOFFRAGE
-            deco_end = buffer_end + timedelta(minutes=t["deco"])
+        # mise à jour
+        current_time = end_four + MOVE  # rotation carrousel
+        deco_available = end_deco
 
-            if deco_end > end_time:
-                break
-
-            rows.append({
-                "Bras": bras,
-                "Produit": prod.capitalize(),
-                "Four début": f(four_start),
-                "Sortie four": f(four_end),
-                "Refroid 1": f(cool1_end),
-                "Refroid 2": f(cool2_end),
-                "Tampon": f(buffer_end),
-                "Fin décoffrage": f(deco_end)
-            })
-
-            # prochain cycle = après four
-            current_time = four_end
-            first_cycle = False
+        first_cycle = False
+        i += 1
 
     return pd.DataFrame(rows)
 
@@ -108,11 +113,20 @@ def simulate():
 df = simulate()
 
 # =============================
-# AFFICHAGE
+# KPI
 # =============================
 
-st.subheader("📋 Flux clair par bras")
+st.subheader("📊 KPI")
 
-for bras in sorted(df["Bras"].unique()):
-    st.markdown(f"### Bras {bras}")
-    st.dataframe(df[df["Bras"] == bras].drop(columns=["Bras"]))
+col1, col2 = st.columns(2)
+
+col1.metric("Production totale", len(df))
+col2.metric("Attente max", int(df["Attente (min)"].max()))
+
+# =============================
+# TABLE
+# =============================
+
+st.subheader("📋 Flux réel (four → sortie)")
+
+st.dataframe(df)
