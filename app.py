@@ -2,16 +2,18 @@ import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
 
-st.title("🏭 P10 - Reproduction Excel")
+st.title("🏭 P10 - Simulation basée sur Excel")
 
 # =============================
 # PARAMÈTRES
 # =============================
 
-jour = st.selectbox("Jour", ["Lundi"])
+st.sidebar.header("Paramètres")
+
+jour = st.sidebar.selectbox("Jour", ["Lundi"])
 
 # =============================
-# TEMPS
+# TEMPS PROCESS
 # =============================
 
 TIMES = {
@@ -20,11 +22,11 @@ TIMES = {
 }
 
 # =============================
-# DÉCALAGE RÉEL (TRÈS IMPORTANT)
+# CONFIG RÉELLE (Excel)
 # =============================
 
 STARTS = {
-    4: datetime(2024, 1, 1, 6, 25),  # bras 4 commence
+    4: datetime(2024, 1, 1, 6, 25),
     1: datetime(2024, 1, 1, 7, 3),
     2: datetime(2024, 1, 1, 7, 51),
     3: datetime(2024, 1, 1, 8, 12),
@@ -47,7 +49,7 @@ def f(t):
     return t.strftime("%H:%M")
 
 # =============================
-# SIMULATION (FIDÈLE)
+# SIMULATION
 # =============================
 
 def simulate():
@@ -61,18 +63,48 @@ def simulate():
         t = TIMES[prod]
 
         first = True
+        cycle = 0
 
         while current < END_TIME:
 
+            cycle += 1
+
+            # =============================
+            # BYPASS (comme Excel)
+            # =============================
+            if cycle % 3 == 0:
+
+                bypass_start = current
+                bypass_end = current + timedelta(minutes=3)
+
+                rows.append({
+                    "Bras": bras,
+                    "Type": "BYPASS",
+                    "Four début": f(bypass_start),
+                    "Four fin": f(bypass_end),
+                    "Refroid fin": f(bypass_end),
+                    "Décoffrage fin": f(bypass_end),
+                    "Note": "By-pass (tampon)"
+                })
+
+                current = bypass_end
+                continue
+
+            # =============================
             # FOUR
+            # =============================
             four_time = t["four"] + (2 if first else 0)
             four_start = current
             four_end = four_start + timedelta(minutes=four_time)
 
-            # REFROID
+            # =============================
+            # REFROIDISSEMENT
+            # =============================
             cool_end = four_end + timedelta(minutes=t["cool"])
 
-            # DECO
+            # =============================
+            # DECOFFRAGE
+            # =============================
             deco_end = cool_end + timedelta(minutes=t["deco"])
 
             if deco_end > END_TIME:
@@ -80,11 +112,12 @@ def simulate():
 
             rows.append({
                 "Bras": bras,
-                "Produit": prod,
+                "Type": prod.capitalize(),
                 "Four début": f(four_start),
                 "Four fin": f(four_end),
                 "Refroid fin": f(cool_end),
-                "Décoffrage fin": f(deco_end)
+                "Décoffrage fin": f(deco_end),
+                "Note": ""
             })
 
             current = four_end
@@ -99,9 +132,25 @@ def simulate():
 df = simulate()
 
 # =============================
-# AFFICHAGE
+# KPI
 # =============================
 
+st.subheader("📊 KPI")
+
+nb_pieces = len(df[df["Type"] != "BYPASS"])
+nb_bypass = len(df[df["Type"] == "BYPASS"])
+
+col1, col2 = st.columns(2)
+
+col1.metric("Production", f"{nb_pieces} pièces")
+col2.metric("By-pass", f"{nb_bypass}")
+
+# =============================
+# AFFICHAGE PAR BRAS
+# =============================
+
+st.subheader("📋 Flux détaillé")
+
 for bras in sorted(df["Bras"].unique()):
-    st.subheader(f"Bras {bras}")
+    st.markdown(f"### Bras {bras}")
     st.dataframe(df[df["Bras"] == bras].drop(columns=["Bras"]))
