@@ -5,18 +5,7 @@ import plotly.express as px
 
 st.set_page_config(layout="wide")
 
-st.title("🏭 P10 - Simulation industrielle")
-
-# =============================
-# PARAMÈTRES
-# =============================
-
-MAX_BUFFER = st.sidebar.slider("Attente max (min)", 0, 60, 20)
-
-pause = st.sidebar.selectbox(
-    "Pause midi",
-    ["Aucune", "Active (12h-13h)"]
-)
+st.title("🏭 P10 - Simulation simple (base Excel)")
 
 # =============================
 # CONFIG
@@ -37,13 +26,10 @@ BRAS_ORDER = [
 start_time = datetime(2024, 1, 1, 6, 25)
 end_time = datetime(2024, 1, 1, 21, 45)
 
-pause_start = datetime(2024, 1, 1, 12, 0)
-pause_end = datetime(2024, 1, 1, 13, 0)
-
 MOVE = timedelta(minutes=1)
 
 # =============================
-# SIMULATION
+# SIMULATION SIMPLE
 # =============================
 
 def simulate():
@@ -54,6 +40,7 @@ def simulate():
     deco_available = start_time
 
     index = 0
+
     first_cycle_done = {b: False for b, _ in BRAS_ORDER}
 
     while current_time < end_time:
@@ -61,63 +48,36 @@ def simulate():
         bras, prod = BRAS_ORDER[index % len(BRAS_ORDER)]
         t = TIMES[prod]
 
-        # =============================
-        # PREMIER CYCLE
-        # =============================
+        # premier cycle +2 min
         if not first_cycle_done[bras]:
             four_time = t["four"] + 2
             first_cycle_done[bras] = True
         else:
             four_time = t["four"]
 
+        # FOUR
         start_four = current_time
         end_four = start_four + timedelta(minutes=four_time)
+
+        # REFROID
         end_cool = end_four + timedelta(minutes=t["cool"])
 
-        # =============================
-        # PAUSE MIDI (bloque déco)
-        # =============================
-        if pause == "Active (12h-13h)":
-            if deco_available >= pause_start and deco_available < pause_end:
-                deco_available = pause_end
-
+        # DECO
         start_deco = max(end_cool, deco_available)
-        wait = (start_deco - end_cool).total_seconds() / 60
-
-        # =============================
-        # BYPASS (VRAI COMPORTEMENT)
-        # =============================
-        if wait > MAX_BUFFER:
-
-            rows.append({
-                "Bras": bras,
-                "Zone": "Bypass",
-                "Start": current_time,
-                "End": current_time + timedelta(minutes=3)
-            })
-
-            # 👉 on avance juste le carrousel
-            current_time += timedelta(minutes=3)
-            index += 1
-            continue
-
         end_deco = start_deco + timedelta(minutes=t["deco"])
 
         if end_deco > end_time:
             break
 
-        # FOUR
-        rows.append({"Bras": bras, "Zone": "Four", "Start": start_four, "End": end_four})
-
-        # REFROID
-        rows.append({"Bras": bras, "Zone": "Refroidissement", "Start": end_four, "End": end_cool})
-
-        # ATTENTE
-        if start_deco > end_cool:
-            rows.append({"Bras": bras, "Zone": "Attente", "Start": end_cool, "End": start_deco})
-
-        # DECO
-        rows.append({"Bras": bras, "Zone": "Décoffrage", "Start": start_deco, "End": end_deco})
+        rows.append({
+            "Bras": bras,
+            "Produit": prod.capitalize(),
+            "Four début": start_four,
+            "Four fin": end_four,
+            "Refroid fin": end_cool,
+            "Déco début": start_deco,
+            "Déco fin": end_deco
+        })
 
         current_time = end_four + MOVE
         deco_available = end_deco
@@ -132,62 +92,64 @@ def simulate():
 df = simulate()
 
 # =============================
-# TABLE PROPRE (ORDRE BRAS)
+# TABLE (COMME EXCEL)
 # =============================
 
-st.subheader("📋 Vue globale")
+st.subheader("📋 Flux production")
 
-df_table = df.copy()
+df_display = df.copy()
 
-df_table["Start"] = df_table["Start"].dt.strftime("%H:%M")
-df_table["End"] = df_table["End"].dt.strftime("%H:%M")
+for col in ["Four début","Four fin","Refroid fin","Déco début","Déco fin"]:
+    df_display[col] = df_display[col].dt.strftime("%H:%M")
 
-# tri correct
-df_table["Bras_num"] = df_table["Bras"].str.extract(r'(\d+)').astype(int)
-df_table = df_table.sort_values(["Bras_num", "Start"])
+# tri bras 1 → 4
+df_display["Bras_num"] = df_display["Bras"].str.extract(r'(\d+)').astype(int)
+df_display = df_display.sort_values(["Bras_num","Four début"])
 
-st.dataframe(df_table.drop(columns="Bras_num"))
-
-# =============================
-# ZOOM PAR BRAS
-# =============================
-
-bras_selected = st.selectbox(
-    "🔎 Zoom sur un bras",
-    ["Tous"] + sorted(df["Bras"].unique())
-)
-
-if bras_selected != "Tous":
-    df_plot = df[df["Bras"] == bras_selected]
-else:
-    df_plot = df
+st.dataframe(df_display.drop(columns="Bras_num"))
 
 # =============================
-# GANTT
+# GANTT SIMPLE (OPTION)
 # =============================
 
-st.subheader("📊 Gantt industriel")
+st.subheader("📊 Gantt simple")
+
+gantt_rows = []
+
+for _, row in df.iterrows():
+
+    gantt_rows.append({
+        "Bras": row["Bras"],
+        "Zone": "Four",
+        "Start": row["Four début"],
+        "End": row["Four fin"]
+    })
+
+    gantt_rows.append({
+        "Bras": row["Bras"],
+        "Zone": "Refroid",
+        "Start": row["Four fin"],
+        "End": row["Refroid fin"]
+    })
+
+    gantt_rows.append({
+        "Bras": row["Bras"],
+        "Zone": "Déco",
+        "Start": row["Déco début"],
+        "End": row["Déco fin"]
+    })
+
+gantt_df = pd.DataFrame(gantt_rows)
 
 fig = px.timeline(
-    df_plot,
+    gantt_df,
     x_start="Start",
     x_end="End",
     y="Bras",
-    color="Zone",
-    color_discrete_map={
-        "Four": "red",
-        "Refroidissement": "blue",
-        "Décoffrage": "green",
-        "Attente": "orange",
-        "Bypass": "yellow"
-    }
+    color="Zone"
 )
 
 fig.update_yaxes(autorange="reversed")
-
-fig.update_xaxes(
-    tickformat="%H:%M",
-    title="Heure"
-)
+fig.update_xaxes(tickformat="%H:%M")
 
 st.plotly_chart(fig, use_container_width=True)
