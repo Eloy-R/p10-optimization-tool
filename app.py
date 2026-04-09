@@ -20,14 +20,6 @@ sequence_type = st.sidebar.selectbox(
     ["Cloison → Cuve", "Cuve → Cloison"]
 )
 
-# Heure départ
-if jour == "Lundi":
-    current_time = datetime(2024, 1, 1, 6, 25)
-else:
-    current_time = datetime(2024, 1, 1, 4, 52)
-
-end_time = datetime(2024, 1, 1, 21, 45)
-
 # =============================
 # TEMPS PROCESS
 # =============================
@@ -52,9 +44,16 @@ def f(t):
 
 def simulate():
 
+    # ✅ IMPORTANT : définir ici
+    if jour == "Lundi":
+        current_time = datetime(2024, 1, 1, 6, 25)
+    else:
+        current_time = datetime(2024, 1, 1, 4, 52)
+
+    end_time = datetime(2024, 1, 1, 21, 45)
+
     rows = []
     deco_available = current_time
-
     first_cycle = True
 
     if sequence_type == "Cloison → Cuve":
@@ -97,8 +96,8 @@ def simulate():
             "Attente (min)": round(wait, 1)
         })
 
-        # mise à jour
-        current_time = end_four + MOVE  # rotation carrousel
+        # update
+        current_time = end_four + MOVE
         deco_available = end_deco
 
         first_cycle = False
@@ -121,7 +120,11 @@ st.subheader("📊 KPI")
 col1, col2 = st.columns(2)
 
 col1.metric("Production totale", len(df))
-col2.metric("Attente max", int(df["Attente (min)"].max()))
+
+if not df.empty:
+    col2.metric("Attente max", int(df["Attente (min)"].max()))
+else:
+    col2.metric("Attente max", "0")
 
 # =============================
 # TABLE
