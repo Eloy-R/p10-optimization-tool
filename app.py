@@ -11,13 +11,11 @@ st.title("🏭 P10 - Simulation industrielle")
 # PARAMÈTRES
 # =============================
 
-st.sidebar.header("Paramètres")
-
 MAX_BUFFER = st.sidebar.slider("Attente max (min)", 0, 60, 20)
 
 pause = st.sidebar.selectbox(
-    "Pause de midi",
-    ["Aucune", "30 min", "1 heure"]
+    "Pause midi",
+    ["Aucune", "Active (12h-13h)"]
 )
 
 # =============================
@@ -63,6 +61,9 @@ def simulate():
         bras, prod = BRAS_ORDER[index % len(BRAS_ORDER)]
         t = TIMES[prod]
 
+        # =============================
+        # PREMIER CYCLE
+        # =============================
         if not first_cycle_done[bras]:
             four_time = t["four"] + 2
             first_cycle_done[bras] = True
@@ -73,22 +74,31 @@ def simulate():
         end_four = start_four + timedelta(minutes=four_time)
         end_cool = end_four + timedelta(minutes=t["cool"])
 
-        if pause != "Aucune":
+        # =============================
+        # PAUSE MIDI (bloque déco)
+        # =============================
+        if pause == "Active (12h-13h)":
             if deco_available >= pause_start and deco_available < pause_end:
                 deco_available = pause_end
 
         start_deco = max(end_cool, deco_available)
         wait = (start_deco - end_cool).total_seconds() / 60
 
-        # BYPASS
+        # =============================
+        # BYPASS (VRAI COMPORTEMENT)
+        # =============================
         if wait > MAX_BUFFER:
+
             rows.append({
                 "Bras": bras,
                 "Zone": "Bypass",
                 "Start": current_time,
                 "End": current_time + timedelta(minutes=3)
             })
+
+            # 👉 on avance juste le carrousel
             current_time += timedelta(minutes=3)
+            index += 1
             continue
 
         end_deco = start_deco + timedelta(minutes=t["deco"])
@@ -122,41 +132,41 @@ def simulate():
 df = simulate()
 
 # =============================
-# TABLE (VISUEL GLOBAL)
+# TABLE PROPRE (ORDRE BRAS)
 # =============================
 
 st.subheader("📋 Vue globale")
 
 df_table = df.copy()
+
 df_table["Start"] = df_table["Start"].dt.strftime("%H:%M")
 df_table["End"] = df_table["End"].dt.strftime("%H:%M")
 
-st.dataframe(df_table)
+# tri correct
+df_table["Bras_num"] = df_table["Bras"].str.extract(r'(\d+)').astype(int)
+df_table = df_table.sort_values(["Bras_num", "Start"])
+
+st.dataframe(df_table.drop(columns="Bras_num"))
 
 # =============================
-# INTERACTION
+# ZOOM PAR BRAS
 # =============================
 
 bras_selected = st.selectbox(
-    "🔎 Mettre en évidence un bras",
+    "🔎 Zoom sur un bras",
     ["Tous"] + sorted(df["Bras"].unique())
 )
+
+if bras_selected != "Tous":
+    df_plot = df[df["Bras"] == bras_selected]
+else:
+    df_plot = df
 
 # =============================
 # GANTT
 # =============================
 
-st.subheader("📊 Gantt interactif")
-
-df_plot = df.copy()
-
-# Highlight
-if bras_selected != "Tous":
-    df_plot["Highlight"] = df_plot["Bras"].apply(
-        lambda x: "Sélectionné" if x == bras_selected else "Autre"
-    )
-else:
-    df_plot["Highlight"] = "Sélectionné"
+st.subheader("📊 Gantt industriel")
 
 fig = px.timeline(
     df_plot,
@@ -164,7 +174,6 @@ fig = px.timeline(
     x_end="End",
     y="Bras",
     color="Zone",
-    pattern_shape="Highlight",
     color_discrete_map={
         "Four": "red",
         "Refroidissement": "blue",
@@ -176,7 +185,6 @@ fig = px.timeline(
 
 fig.update_yaxes(autorange="reversed")
 
-# 🔥 affichage heure uniquement
 fig.update_xaxes(
     tickformat="%H:%M",
     title="Heure"
