@@ -55,4 +55,7 @@ if mode == "Optimisation avancée":
 
         st.dataframe(df)
 
-        st.line_chart(df["end"])
+        if not df.empty and "end" in df.columns:
+    st.line_chart(df["end"])
+else:
+    st.warning("Pas de données à afficher")
