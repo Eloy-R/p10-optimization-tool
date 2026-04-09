@@ -2,26 +2,16 @@ import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
 
-st.title("🏭 P10 - Simulation correcte (1 seul four)")
+st.title("🏭 P10 - Reproduction Excel")
 
 # =============================
 # PARAMÈTRES
 # =============================
 
-st.sidebar.header("Paramètres")
-
-jour = st.sidebar.selectbox(
-    "Jour",
-    ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]
-)
-
-sequence_type = st.sidebar.selectbox(
-    "Séquence",
-    ["Cloison → Cuve", "Cuve → Cloison"]
-)
+jour = st.selectbox("Jour", ["Lundi"])
 
 # =============================
-# TEMPS PROCESS
+# TEMPS
 # =============================
 
 TIMES = {
@@ -29,7 +19,25 @@ TIMES = {
     "cloison": {"four": 35, "cool": 45, "deco": 40}
 }
 
-MOVE = timedelta(seconds=15)
+# =============================
+# DÉCALAGE RÉEL (TRÈS IMPORTANT)
+# =============================
+
+STARTS = {
+    4: datetime(2024, 1, 1, 6, 25),  # bras 4 commence
+    1: datetime(2024, 1, 1, 7, 3),
+    2: datetime(2024, 1, 1, 7, 51),
+    3: datetime(2024, 1, 1, 8, 12),
+}
+
+BRAS_TYPE = {
+    1: "cuve",
+    2: "cloison",
+    3: "cuve",
+    4: "cloison"
+}
+
+END_TIME = datetime(2024, 1, 1, 21, 45)
 
 # =============================
 # FORMAT
@@ -39,69 +47,48 @@ def f(t):
     return t.strftime("%H:%M")
 
 # =============================
-# SIMULATION
+# SIMULATION (FIDÈLE)
 # =============================
 
 def simulate():
 
-    # ✅ IMPORTANT : définir ici
-    if jour == "Lundi":
-        current_time = datetime(2024, 1, 1, 6, 25)
-    else:
-        current_time = datetime(2024, 1, 1, 4, 52)
-
-    end_time = datetime(2024, 1, 1, 21, 45)
-
     rows = []
-    deco_available = current_time
-    first_cycle = True
 
-    if sequence_type == "Cloison → Cuve":
-        seq = ["cloison", "cuve"]
-    else:
-        seq = ["cuve", "cloison"]
+    for bras in BRAS_TYPE:
 
-    i = 0
-
-    while current_time < end_time:
-
-        prod = seq[i % 2]
+        current = STARTS[bras]
+        prod = BRAS_TYPE[bras]
         t = TIMES[prod]
 
-        # FOUR
-        four_time = t["four"] + (2 if first_cycle else 0)
-        start_four = current_time
-        end_four = start_four + timedelta(minutes=four_time)
+        first = True
 
-        # REFROID
-        end_cool = end_four + timedelta(minutes=t["cool"])
+        while current < END_TIME:
 
-        # ZONE LATENTE
-        start_deco = max(end_cool, deco_available)
-        wait = (start_deco - end_cool).total_seconds() / 60
+            # FOUR
+            four_time = t["four"] + (2 if first else 0)
+            four_start = current
+            four_end = four_start + timedelta(minutes=four_time)
 
-        # DECOFFRAGE
-        end_deco = start_deco + timedelta(minutes=t["deco"])
+            # REFROID
+            cool_end = four_end + timedelta(minutes=t["cool"])
 
-        if end_deco > end_time:
-            break
+            # DECO
+            deco_end = cool_end + timedelta(minutes=t["deco"])
 
-        rows.append({
-            "Produit": prod.capitalize(),
-            "Entrée four": f(start_four),
-            "Sortie four": f(end_four),
-            "Fin refroid": f(end_cool),
-            "Début décoffrage": f(start_deco),
-            "Fin décoffrage": f(end_deco),
-            "Attente (min)": round(wait, 1)
-        })
+            if deco_end > END_TIME:
+                break
 
-        # update
-        current_time = end_four + MOVE
-        deco_available = end_deco
+            rows.append({
+                "Bras": bras,
+                "Produit": prod,
+                "Four début": f(four_start),
+                "Four fin": f(four_end),
+                "Refroid fin": f(cool_end),
+                "Décoffrage fin": f(deco_end)
+            })
 
-        first_cycle = False
-        i += 1
+            current = four_end
+            first = False
 
     return pd.DataFrame(rows)
 
@@ -112,24 +99,9 @@ def simulate():
 df = simulate()
 
 # =============================
-# KPI
+# AFFICHAGE
 # =============================
 
-st.subheader("📊 KPI")
-
-col1, col2 = st.columns(2)
-
-col1.metric("Production totale", len(df))
-
-if not df.empty:
-    col2.metric("Attente max", int(df["Attente (min)"].max()))
-else:
-    col2.metric("Attente max", "0")
-
-# =============================
-# TABLE
-# =============================
-
-st.subheader("📋 Flux réel (four → sortie)")
-
-st.dataframe(df)
+for bras in sorted(df["Bras"].unique()):
+    st.subheader(f"Bras {bras}")
+    st.dataframe(df[df["Bras"] == bras].drop(columns=["Bras"]))
