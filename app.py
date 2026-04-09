@@ -51,11 +51,18 @@ if mode == "Optimisation avancée":
 
         df = pd.DataFrame(result)
 
-        st.success("Optimisation terminée")
+        if df.empty:
+            st.warning("⚠️ Aucune solution trouvée")
+        else:
+            st.success("Optimisation terminée")
 
-        st.dataframe(df)
+            st.dataframe(df)
 
-        if not df.empty and "end" in df.columns:
-    st.line_chart(df["end"])
-else:
-    st.warning("Pas de données à afficher")
+            # ✅ FIX BUG
+            if "end" in df.columns:
+                st.line_chart(df["end"])
+            else:
+                st.warning("Colonne 'end' absente")
+
+        # debug utile
+        st.write("DEBUG :", df)
