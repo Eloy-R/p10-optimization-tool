@@ -1,10 +1,11 @@
 import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
+import plotly.express as px
 
 st.set_page_config(layout="wide")
 
-st.title("🏭 P10 - Simulation + Gantt")
+st.title("🏭 P10 - Simulation + Gantt visuel")
 
 # =============================
 # PARAMÈTRES
@@ -47,7 +48,6 @@ BRAS_ORDER = [
 start_time = datetime(2024, 1, 1, 6, 25)
 end_time = datetime(2024, 1, 1, 21, 45)
 
-# pause midi (12:00)
 pause_start = datetime(2024, 1, 1, 12, 0)
 
 if pause == "30 min":
@@ -55,7 +55,7 @@ if pause == "30 min":
 elif pause == "1 heure":
     pause_duration = timedelta(hours=1)
 else:
-    pause_duration = timedelta(minutes=0)
+    pause_duration = timedelta(0)
 
 pause_end = pause_start + pause_duration
 
@@ -121,10 +121,14 @@ def simulate():
 
         rows.append({
             "Bras": bras,
-            "Produit": prod.capitalize(),
-            "Start": start_four,
-            "End": end_deco,
-            "Type": prod
+            "Produit": prod,
+            "Four_start": start_four,
+            "Four_end": end_four,
+            "Cool_start": end_four,
+            "Cool_end": end_cool,
+            "Deco_start": start_deco,
+            "Deco_end": end_deco,
+            "Wait": round((start_deco - end_cool).total_seconds()/60, 1)
         })
 
         current_time = end_four + MOVE
@@ -145,37 +149,71 @@ df = simulate()
 
 st.subheader("📊 KPI")
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 col1.metric("Production", len(df))
+col2.metric("Attente max", int(df["Wait"].max()))
+col3.metric("Attente moyenne", int(df["Wait"].mean()))
 
 # =============================
-# GANTT VISUEL
+# TABLE GLOBALE
 # =============================
 
-st.subheader("📊 Gantt de production")
-
-if not df.empty:
-
-    gantt_df = df.copy()
-    gantt_df["Start_num"] = gantt_df["Start"].astype("int64") / 1e9
-    gantt_df["Duration"] = (gantt_df["End"] - gantt_df["Start"]).dt.total_seconds() / 60
-
-    chart = st.bar_chart(
-        data=gantt_df,
-        x="Start_num",
-        y="Duration",
-        horizontal=True
-    )
-
-# =============================
-# TABLE
-# =============================
-
-st.subheader("📋 Détail")
+st.subheader("📋 Flux global")
 
 df_display = df.copy()
-df_display["Start"] = df_display["Start"].dt.strftime("%H:%M")
-df_display["End"] = df_display["End"].dt.strftime("%H:%M")
+
+for col in ["Four_start","Four_end","Cool_start","Cool_end","Deco_start","Deco_end"]:
+    df_display[col] = df_display[col].dt.strftime("%H:%M")
 
 st.dataframe(df_display)
+
+# =============================
+# GANTT VISUEL PROPRE
+# =============================
+
+st.subheader("📊 Gantt par bras (zones visibles)")
+
+gantt_rows = []
+
+for _, row in df.iterrows():
+
+    gantt_rows.append({
+        "Bras": row["Bras"],
+        "Zone": "Four",
+        "Start": row["Four_start"],
+        "End": row["Four_end"]
+    })
+
+    gantt_rows.append({
+        "Bras": row["Bras"],
+        "Zone": "Refroidissement",
+        "Start": row["Cool_start"],
+        "End": row["Cool_end"]
+    })
+
+    gantt_rows.append({
+        "Bras": row["Bras"],
+        "Zone": "Décoffrage",
+        "Start": row["Deco_start"],
+        "End": row["Deco_end"]
+    })
+
+gantt_df = pd.DataFrame(gantt_rows)
+
+fig = px.timeline(
+    gantt_df,
+    x_start="Start",
+    x_end="End",
+    y="Bras",
+    color="Zone",
+    color_discrete_map={
+        "Four": "red",
+        "Refroidissement": "blue",
+        "Décoffrage": "green"
+    }
+)
+
+fig.update_yaxes(autorange="reversed")
+
+st.plotly_chart(fig, use_container_width=True)
