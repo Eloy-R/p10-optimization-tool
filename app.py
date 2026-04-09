@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
 
-st.title("🏭 P10 - Flux par bras (lecture claire)")
+st.title("🏭 P10 - Flux par bras (version claire)")
 
 # =============================
 # PARAMÈTRES
@@ -15,7 +15,7 @@ jour = st.sidebar.selectbox(
     ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]
 )
 
-# Départ
+# Heure de départ
 if jour == "Lundi":
     start_time = datetime(2024, 1, 1, 6, 25)
 else:
@@ -24,7 +24,7 @@ else:
 end_time = datetime(2024, 1, 1, 21, 45)
 
 # =============================
-# CONFIG
+# CONFIG BRAS
 # =============================
 
 BRAS_CONFIG = {
@@ -35,35 +35,34 @@ BRAS_CONFIG = {
 }
 
 TIMES = {
-    "cuve": {"four": 45, "cool1": 20, "cool2": 26, "deco": 60},
-    "cloison": {"four": 35, "cool1": 20, "cool2": 25, "deco": 40}
+    "cuve": {"four": 45, "cool1": 20, "cool2": 26, "buffer": 5, "deco": 60},
+    "cloison": {"four": 35, "cool1": 20, "cool2": 25, "buffer": 5, "deco": 40}
 }
-
-MOVE_TIME = 15  # secondes
 
 # =============================
 # FORMAT
 # =============================
 
 def f(t):
-    return t.strftime("%H:%M:%S")
+    return t.strftime("%H:%M")
 
 # =============================
-# SIMULATION SIMPLE
+# SIMULATION SIMPLE PAR BRAS
 # =============================
 
 def simulate():
 
-    current_time = start_time
     rows = []
-    first_cycle = True
 
-    while current_time < end_time:
+    for bras in BRAS_CONFIG:
 
-        for bras in BRAS_CONFIG:
+        current_time = start_time
+        prod = BRAS_CONFIG[bras]
+        t = TIMES[prod]
 
-            prod = BRAS_CONFIG[bras]
-            t = TIMES[prod]
+        first_cycle = True
+
+        while current_time < end_time:
 
             # FOUR
             four_time = t["four"] + (2 if first_cycle else 0)
@@ -76,14 +75,14 @@ def simulate():
             # REFROID 2
             cool2_end = cool1_end + timedelta(minutes=t["cool2"])
 
-            # ZONE TAMPON (fixe simple)
-            buffer_end = cool2_end + timedelta(minutes=5)
+            # TAMPON
+            buffer_end = cool2_end + timedelta(minutes=t["buffer"])
 
             # DECOFFRAGE
             deco_end = buffer_end + timedelta(minutes=t["deco"])
 
             if deco_end > end_time:
-                return pd.DataFrame(rows)
+                break
 
             rows.append({
                 "Bras": bras,
@@ -92,13 +91,13 @@ def simulate():
                 "Sortie four": f(four_end),
                 "Refroid 1": f(cool1_end),
                 "Refroid 2": f(cool2_end),
-                "Zone tampon": f(buffer_end),
-                "Décoffrage fin": f(deco_end)
+                "Tampon": f(buffer_end),
+                "Fin décoffrage": f(deco_end)
             })
 
-        # mouvement carrousel
-        current_time += timedelta(seconds=MOVE_TIME)
-        first_cycle = False
+            # prochain cycle = après four
+            current_time = four_end
+            first_cycle = False
 
     return pd.DataFrame(rows)
 
@@ -112,7 +111,7 @@ df = simulate()
 # AFFICHAGE
 # =============================
 
-st.subheader("📋 Flux détaillé par bras")
+st.subheader("📋 Flux clair par bras")
 
 for bras in sorted(df["Bras"].unique()):
     st.markdown(f"### Bras {bras}")
