@@ -5,7 +5,7 @@ import plotly.express as px
 
 st.set_page_config(layout="wide")
 
-st.title("🏭 P10 - Simulation (logique terrain)")
+st.title("🏭 P10 - Simulation (global Excel)")
 
 # =============================
 # PARAMÈTRES
@@ -120,27 +120,21 @@ def simulate():
 df = simulate()
 
 # =============================
-# TABLE PAR BRAS (LIGNES)
+# TABLE GLOBAL (COMME EXCEL)
 # =============================
 
-st.subheader("📋 Flux production (par bras)")
+st.subheader("📋 Flux global")
 
 df_display = df.copy()
 
 for col in ["Four début","Four fin","Refroid fin","Déco début","Déco fin"]:
     df_display[col] = df_display[col].dt.strftime("%H:%M")
 
-# tri bras
+# tri bras 1 → 4 puis temps
 df_display["Bras_num"] = df_display["Bras"].str.extract(r'(\d+)').astype(int)
 df_display = df_display.sort_values(["Bras_num","Four début"])
 
-# affichage par bras
-for bras in ["Bras 1", "Bras 2", "Bras 3", "Bras 4"]:
-    st.markdown(f"### {bras}")
-    st.dataframe(
-        df_display[df_display["Bras"] == bras].drop(columns="Bras_num"),
-        use_container_width=True
-    )
+st.dataframe(df_display.drop(columns="Bras_num"), use_container_width=True)
 
 # =============================
 # GANTT
@@ -189,11 +183,7 @@ fig = px.timeline(
 )
 
 fig.update_yaxes(autorange="reversed")
-
-fig.update_xaxes(
-    tickformat="%H:%M",
-    title="Heure"
-)
+fig.update_xaxes(tickformat="%H:%M")
 
 st.plotly_chart(fig, use_container_width=True)
 
