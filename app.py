@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
 
-st.title("🏭 P10 - Simulation Rotomoulage")
+st.title("🏭 P10 - Simulation correcte (1 seul four)")
 
 # =============================
 # PARAMÈTRES
