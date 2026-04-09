@@ -5,7 +5,7 @@ import plotly.express as px
 
 st.set_page_config(layout="wide")
 
-st.title("🏭 P10 - Simulation (global Excel)")
+st.title("🏭 P10 - Simulation (base propre Excel)")
 
 # =============================
 # PARAMÈTRES
@@ -19,7 +19,7 @@ MAX_LATENCE = st.sidebar.slider(
 pause_active = st.sidebar.checkbox("Pause midi (12h-13h)", True)
 
 # =============================
-# CONFIG
+# CONFIG PROCESS
 # =============================
 
 TIMES = {
@@ -61,36 +61,41 @@ def simulate():
         bras, prod = BRAS_ORDER[index % len(BRAS_ORDER)]
         t = TIMES[prod]
 
-        # premier cycle
+        # 🔥 premier cycle (+2 min)
         if not first_cycle_done[bras]:
             four_time = t["four"] + 2
             first_cycle_done[bras] = True
         else:
             four_time = t["four"]
 
+        # FOUR
         start_four = current_time
         end_four = start_four + timedelta(minutes=four_time)
 
+        # REFROID
         end_cool = end_four + timedelta(minutes=t["cool"])
 
-        # pause midi
+        # 🔥 PAUSE MIDI (bloque déco uniquement)
         if pause_active:
             if deco_available >= pause_start and deco_available < pause_end:
                 deco_available = pause_end
 
+        # LATENCE
         start_deco = max(end_cool, deco_available)
         latence = (start_deco - end_cool).total_seconds() / 60
 
-        # ajustement latence
+        # 🔥 AJUSTEMENT LATENCE (zone critique)
         if latence > MAX_LATENCE:
             delay = latence - MAX_LATENCE
             current_time += timedelta(minutes=delay)
 
+            # recalcul
             start_four = current_time
             end_four = start_four + timedelta(minutes=four_time)
             end_cool = end_four + timedelta(minutes=t["cool"])
             start_deco = max(end_cool, deco_available)
 
+        # DECO
         end_deco = start_deco + timedelta(minutes=t["deco"])
 
         if end_deco > end_time:
@@ -107,6 +112,7 @@ def simulate():
             "Latence": round((start_deco - end_cool).total_seconds()/60,1)
         })
 
+        # UPDATE
         current_time = end_four + MOVE
         deco_available = end_deco
         index += 1
@@ -120,24 +126,30 @@ def simulate():
 df = simulate()
 
 # =============================
-# TABLE GLOBAL (COMME EXCEL)
+# TABLE GLOBAL (CORRIGÉE)
 # =============================
 
 st.subheader("📋 Flux global")
 
 df_display = df.copy()
 
+# format heure
 for col in ["Four début","Four fin","Refroid fin","Déco début","Déco fin"]:
     df_display[col] = df_display[col].dt.strftime("%H:%M")
 
-# tri bras 1 → 4 puis temps
-df_display["Bras_num"] = df_display["Bras"].str.extract(r'(\d+)').astype(int)
-df_display = df_display.sort_values(["Bras_num","Four début"])
+# 🔥 TRI PROPRE PAR BRAS
+df_display["Bras"] = pd.Categorical(
+    df_display["Bras"],
+    categories=["Bras 1", "Bras 2", "Bras 3", "Bras 4"],
+    ordered=True
+)
 
-st.dataframe(df_display.drop(columns="Bras_num"), use_container_width=True)
+df_display = df_display.sort_values(["Bras","Four début"]).reset_index(drop=True)
+
+st.dataframe(df_display, use_container_width=True)
 
 # =============================
-# GANTT
+# GANTT SIMPLE
 # =============================
 
 st.subheader("📊 Gantt")
@@ -183,7 +195,7 @@ fig = px.timeline(
 )
 
 fig.update_yaxes(autorange="reversed")
-fig.update_xaxes(tickformat="%H:%M")
+fig.update_xaxes(tickformat="%H:%M", title="Heure")
 
 st.plotly_chart(fig, use_container_width=True)
 
