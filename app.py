@@ -1,68 +1,133 @@
 import streamlit as st
+from datetime import datetime, timedelta
 import pandas as pd
-import numpy as np
 
-from optimizer import optimize
-from simulation import simulate
-
-st.set_page_config(layout="wide")
-
-st.title("🏭 P10 Optimization Tool")
+st.title("🏭 Simulation P10 avec contraintes")
 
 # =============================
-# SIDEBAR
+# PARAMÈTRES
 # =============================
 
-st.sidebar.header("Paramètres")
+start_time = datetime(2024, 1, 1, 4, 52)
+end_time = datetime(2024, 1, 1, 21, 45)
 
-mode = st.sidebar.radio("Mode", ["Simulation", "Optimisation avancée"])
-nb_cycles = st.sidebar.slider("Nombre de cycles", 10, 80, 40)
+NB_BRAS = 4
+MAX_WAIT = 20  # minutes
 
-# =============================
-# MODE SIMULATION
-# =============================
-
-if mode == "Simulation":
-
-    st.subheader("🔁 Simulation")
-
-    sequence = list(np.random.choice(["cuve", "cloison"], nb_cycles))
-
-    df = simulate(sequence)
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Production", len(df))
-    col2.metric("Attente totale", int(df["wait"].sum()))
-    col3.metric("Max attente", int(df["wait"].max()))
-
-    st.dataframe(df)
+CLOISON = {"four": 35, "cool": 45, "deco": 40}
+CUVE = {"four": 45, "cool": 46, "deco": 60}
 
 # =============================
-# MODE OPTIMISATION
+# SIMULATION
 # =============================
 
-if mode == "Optimisation avancée":
+def simulate_day():
 
-    st.subheader("🧠 OR-Tools Optimisation")
+    bras_times = [start_time] * NB_BRAS
+    deco_available = start_time
 
-    if st.button("Lancer optimisation"):
+    results = []
 
-        result = optimize(nb_cycles)
+    first_cycle = True
 
-        df = pd.DataFrame(result)
+    while True:
 
-        if df.empty:
-            st.warning("⚠️ Aucune solution trouvée")
-        else:
-            st.success("Optimisation terminée")
+        for bras in range(NB_BRAS):
 
-            st.dataframe(df)
+            current_time = bras_times[bras]
 
-            # ✅ FIX BUG
-            if "end" in df.columns:
-                st.line_chart(df["end"])
-            else:
-                st.warning("Colonne 'end' absente")
+            if current_time >= end_time:
+                return pd.DataFrame(results)
 
-        # debug utile
-        st.write("DEBUG :", df)
+            # alternance cloison / cuve
+            for prod in ["cloison", "cuve"]:
+
+                if prod == "cloison":
+                    t = CLOISON
+                else:
+                    t = CUVE
+
+                # FOUR
+                four_time = t["four"] + (2 if first_cycle else 0)
+                end_four = current_time + timedelta(minutes=four_time)
+
+                # REFROIDISSEMENT
+                end_cool = end_four + timedelta(minutes=t["cool"])
+
+                # DÉCOFFRAGE (goulot)
+                start_deco = max(end_cool, deco_available)
+                wait = (start_deco - end_cool).total_seconds() / 60
+
+                # 👉 BY-PASS si attente trop grande
+                if wait > MAX_WAIT:
+                    results.append({
+                        "bras": bras,
+                        "type": "BYPASS",
+                        "start": current_time,
+                        "end": current_time,
+                        "wait": wait
+                    })
+
+                    # on avance juste le bras (simulation passage vide)
+                    bras_times[bras] = current_time + timedelta(minutes=5)
+                    break
+
+                end_deco = start_deco + timedelta(minutes=t["deco"])
+
+                if end_deco > end_time:
+                    return pd.DataFrame(results)
+
+                results.append({
+                    "bras": bras,
+                    "type": prod,
+                    "start": current_time,
+                    "end": end_deco,
+                    "wait": wait
+                })
+
+                # update ressources
+                deco_available = end_deco
+                current_time = end_four
+
+                bras_times[bras] = current_time
+
+                first_cycle = False
+
+    return pd.DataFrame(results)
+
+# =============================
+# RUN
+# =============================
+
+df = simulate_day()
+
+# =============================
+# KPI
+# =============================
+
+st.subheader("📊 KPI")
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Total pièces", len(df[df["type"] != "BYPASS"]))
+col2.metric("By-pass", len(df[df["type"] == "BYPASS"]))
+col3.metric("Attente max", int(df["wait"].max()))
+
+# =============================
+# TABLE
+# =============================
+
+st.dataframe(df)
+
+# =============================
+# ALERTES
+# =============================
+
+st.subheader("🚨 Risques")
+
+risk_df = df[df["wait"] > MAX_WAIT]
+
+if len(risk_df) > 0:
+    st.error(f"{len(risk_df)} pièces en risque")
+else:
+    st.success("Aucun risque qualité")
