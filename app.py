@@ -4,7 +4,7 @@ import pandas as pd
 
 st.set_page_config(layout="wide")
 
-st.title("🏭 P10 - Simulation globale (fidèle Excel + latence)")
+st.title("🏭 P10 - Simulation + Gantt")
 
 # =============================
 # PARAMÈTRES
@@ -19,6 +19,11 @@ MAX_BUFFER = st.sidebar.slider(
     0, 60, 20
 )
 
+pause = st.sidebar.selectbox(
+    "Pause de midi",
+    ["Aucune", "30 min", "1 heure"]
+)
+
 # =============================
 # TEMPS PROCESS
 # =============================
@@ -28,7 +33,6 @@ TIMES = {
     "cloison": {"four": 35, "cool": 45, "deco": 40}
 }
 
-# Ordre réel carrousel
 BRAS_ORDER = [
     ("Bras 4", "cloison"),
     ("Bras 1", "cuve"),
@@ -40,21 +44,22 @@ BRAS_ORDER = [
 # HORAIRES
 # =============================
 
-if jour == "Lundi":
-    start_time = datetime(2024, 1, 1, 6, 25)
-else:
-    start_time = datetime(2024, 1, 1, 4, 52)
-
+start_time = datetime(2024, 1, 1, 6, 25)
 end_time = datetime(2024, 1, 1, 21, 45)
 
+# pause midi (12:00)
+pause_start = datetime(2024, 1, 1, 12, 0)
+
+if pause == "30 min":
+    pause_duration = timedelta(minutes=30)
+elif pause == "1 heure":
+    pause_duration = timedelta(hours=1)
+else:
+    pause_duration = timedelta(minutes=0)
+
+pause_end = pause_start + pause_duration
+
 MOVE = timedelta(minutes=1)
-
-# =============================
-# FORMAT
-# =============================
-
-def f(t):
-    return t.strftime("%H:%M")
 
 # =============================
 # SIMULATION
@@ -69,59 +74,45 @@ def simulate():
 
     index = 0
 
-    # suivi premier cycle par bras
-    first_cycle_done = {
-        "Bras 1": False,
-        "Bras 2": False,
-        "Bras 3": False,
-        "Bras 4": False
-    }
+    first_cycle_done = {b: False for b, _ in BRAS_ORDER}
 
     while current_time < end_time:
 
         bras, prod = BRAS_ORDER[index % len(BRAS_ORDER)]
         t = TIMES[prod]
 
-        # =============================
-        # PREMIER CYCLE (+2 min)
-        # =============================
+        # pause midi (bloque décoffrage)
+        if pause_duration > timedelta(0):
+            if deco_available >= pause_start and deco_available < pause_end:
+                deco_available = pause_end
+
+        # premier cycle
         if not first_cycle_done[bras]:
             four_time = t["four"] + 2
             first_cycle_done[bras] = True
         else:
             four_time = t["four"]
 
-        # =============================
         # FOUR
-        # =============================
         start_four = current_time
         end_four = start_four + timedelta(minutes=four_time)
 
-        # =============================
         # REFROID
-        # =============================
         end_cool = end_four + timedelta(minutes=t["cool"])
 
-        # =============================
-        # TEST LATENCE (clé)
-        # =============================
+        # latence intelligente
         projected_start_deco = max(end_cool, deco_available)
         wait_time = (projected_start_deco - end_cool).total_seconds() / 60
 
-        # 👉 correction intelligente (comme opérateur)
         if wait_time > MAX_BUFFER:
-
             delay = wait_time - MAX_BUFFER
             current_time += timedelta(minutes=delay)
 
-            # recalcul
             start_four = current_time
             end_four = start_four + timedelta(minutes=four_time)
             end_cool = end_four + timedelta(minutes=t["cool"])
 
-        # =============================
         # DECOFFRAGE
-        # =============================
         start_deco = max(end_cool, deco_available)
         end_deco = start_deco + timedelta(minutes=t["deco"])
 
@@ -131,17 +122,11 @@ def simulate():
         rows.append({
             "Bras": bras,
             "Produit": prod.capitalize(),
-            "Four début": f(start_four),
-            "Four fin": f(end_four),
-            "Refroid fin": f(end_cool),
-            "Décoffrage début": f(start_deco),
-            "Décoffrage fin": f(end_deco),
-            "Attente (min)": round((start_deco - end_cool).total_seconds() / 60, 1)
+            "Start": start_four,
+            "End": end_deco,
+            "Type": prod
         })
 
-        # =============================
-        # UPDATE GLOBAL
-        # =============================
         current_time = end_four + MOVE
         deco_available = end_deco
         index += 1
@@ -160,26 +145,37 @@ df = simulate()
 
 st.subheader("📊 KPI")
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
-col1.metric("Production totale", len(df))
-col2.metric("Attente max", int(df["Attente (min)"].max()))
-col3.metric("Attente moyenne", int(df["Attente (min)"].mean()))
+col1.metric("Production", len(df))
 
 # =============================
-# TABLE GLOBALE
+# GANTT VISUEL
 # =============================
 
-st.subheader("📋 Flux global")
+st.subheader("📊 Gantt de production")
 
-st.dataframe(df)
+if not df.empty:
+
+    gantt_df = df.copy()
+    gantt_df["Start_num"] = gantt_df["Start"].astype("int64") / 1e9
+    gantt_df["Duration"] = (gantt_df["End"] - gantt_df["Start"]).dt.total_seconds() / 60
+
+    chart = st.bar_chart(
+        data=gantt_df,
+        x="Start_num",
+        y="Duration",
+        horizontal=True
+    )
 
 # =============================
-# VUE PAR BRAS
+# TABLE
 # =============================
 
-st.subheader("📊 Vue par bras")
+st.subheader("📋 Détail")
 
-for bras in df["Bras"].unique():
-    st.markdown(f"### {bras}")
-    st.dataframe(df[df["Bras"] == bras].drop(columns=["Bras"]))
+df_display = df.copy()
+df_display["Start"] = df_display["Start"].dt.strftime("%H:%M")
+df_display["End"] = df_display["End"].dt.strftime("%H:%M")
+
+st.dataframe(df_display)
