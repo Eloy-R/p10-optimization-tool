@@ -13,7 +13,7 @@ def optimize(nb_cycles=40):
 
         is_cuve = model.NewBoolVar(f"is_cuve_{i}")
 
-        # Durées variables
+        # Durées
         four = model.NewIntVar(35, 45, f"four_{i}")
         cool = model.NewIntVar(45, 46, f"cool_{i}")
         deco = model.NewIntVar(40, 60, f"deco_{i}")
@@ -42,7 +42,7 @@ def optimize(nb_cycles=40):
         ends.append(end)
         intervals.append(interval)
 
-    # Goulot : décoffrage
+    # Goulot décoffrage
     model.AddNoOverlap(intervals)
 
     makespan = model.NewIntVar(0, horizon, "makespan")
@@ -51,7 +51,8 @@ def optimize(nb_cycles=40):
     model.Minimize(makespan)
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 10
+    solver.parameters.max_time_in_seconds = 20
+    solver.parameters.num_search_workers = 8
 
     status = solver.Solve(model)
 
