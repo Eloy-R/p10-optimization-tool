@@ -386,7 +386,7 @@ with tab2:
             "CVVC": ["cuve", "cloison", "cloison", "cuve"],
             "CVCV": ["cuve", "cloison", "cuve", "cloison"],
             "VVCC": ["cuve", "cuve", "cloison", "cloison"],
-            "Alt": ["cloison", "cuve", "cloison", "cuve"],
+            "Actu": ["cloison", "cuve", "cloison", "cuve"],
         }
 
         mix_results = []
