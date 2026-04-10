@@ -379,7 +379,7 @@ with tab2:
         # MIX ANNUEL OPTIMAL
         # =========================
 
-        st.subheader(" Mix annuel optimal C: Cloison ; V: Cuve")
+        st.subheader(" Mix annuel optimal (C: Cloison ; V: Cuve)")
 
         configs = {
             "CCVV": ["cloison", "cloison", "cuve", "cuve"],
