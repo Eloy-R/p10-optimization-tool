@@ -226,14 +226,21 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
 # =========================
-# ONGLET OPTIMISATION ===================
+# ONGLET OPTIMISATION
 # =========================
 
 with tab2:
 
     st.title("🚀 Optimisation avancée production")
-
     st.markdown("### 🎯 Maximiser production + utilisation four")
+
+    # 🔧 fonction centrale (évite répétition)
+    def simulate_with_overtime(extra):
+        original_end = END_TIME
+        globals()["END_TIME"] = original_end + extra
+        df = simulate()
+        globals()["END_TIME"] = original_end
+        return df
 
     if st.button("Lancer optimisation avancée"):
 
@@ -241,7 +248,6 @@ with tab2:
         best_score = -999
         best_config = None
 
-        # 🔥 pauses dynamiques
         pauses = [
             ("Pas de pause", False, None),
             ("11:30-12:00", True, (11*60+30, 12*60)),
@@ -250,11 +256,8 @@ with tab2:
             ("12:00-13:00", True, (12*60, 13*60)),
         ]
 
-        latences = range(0, 11)
-
         for pause_name, pause_active_val, pause_window in pauses:
-
-            for lat in latences:
+            for lat in range(0, 11):
 
                 pause_start_orig = PAUSE_START
                 pause_end_orig = PAUSE_END
@@ -278,18 +281,14 @@ with tab2:
                 if df.empty:
                     continue
 
-                nb_cuves = len(df[df["Produit"] == "cuve"])
-                nb_cloisons = len(df[df["Produit"] == "cloison"])
-                total_prod = nb_cuves + nb_cloisons
+                total_prod = len(df)
 
                 total_four_time = sum(
                     to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
                     for _, r in df.iterrows()
                 )
 
-                total_available_time = END_TIME - START_TIME
-                taux_four = (total_four_time / total_available_time) * 100
-
+                taux_four = (total_four_time / (END_TIME - START_TIME)) * 100
                 lat_moy = df["Latence (min)"].mean()
 
                 score = total_prod * 100 + taux_four - lat_moy * 2
@@ -312,15 +311,10 @@ with tab2:
         st.subheader("📊 Scénarios")
         st.dataframe(df_results)
 
-        st.subheader(" Meilleur scénario")
-
+        st.subheader("🏆 Meilleur scénario")
         st.success(
-            f"""
-             {best_config['Pause']}
-            - Latence : {best_config['Latence max']} min
-            - Production : {best_config['Production']}
-            - Taux four : {best_config['Taux four (%)']}%
-            """
+            f"{best_config['Pause']} | Latence {best_config['Latence max']} min | "
+            f"{best_config['Production']} pièces | {best_config['Taux four (%)']}%"
         )
 
         # =========================
@@ -345,116 +339,79 @@ with tab2:
 
         st.subheader("⏱️ Overtime intelligent")
 
-        overtime_results = []
-
-        for extra in [0, 15, 30, 45, 60]:
-
-            original_end = END_TIME
-            globals()["END_TIME"] = original_end + extra
-
-            df = simulate()
-
-            globals()["END_TIME"] = original_end
-
-            if df.empty:
-                continue
-
-            overtime_results.append({
-                "Overtime (min)": extra,
-                "Production": len(df)
-            })
-
-        df_ot = pd.DataFrame(overtime_results)
+        overtime_range = [0, 15, 30, 45, 60]
+        df_ot = pd.DataFrame([
+            {"Overtime (min)": extra, "Production": len(simulate_with_overtime(extra))}
+            for extra in overtime_range
+        ])
 
         st.dataframe(df_ot)
 
         for i in range(1, len(df_ot)):
             if df_ot.iloc[i]["Production"] > df_ot.iloc[i-1]["Production"]:
-                gain = df_ot.iloc[i]["Production"] - df_ot.iloc[i-1]["Production"]
-                extra = df_ot.iloc[i]["Overtime (min)"]
-
-                st.info(f"👉 +{extra} min permet +{gain} pièce(s)")
+                st.info(
+                    f"👉 +{df_ot.iloc[i]['Overtime (min)']} min → "
+                    f"+{df_ot.iloc[i]['Production'] - df_ot.iloc[i-1]['Production']} pièce(s)"
+                )
 
         # =========================
-        # 🎯 SEUIL CRITIQUE PRODUCTION
+        # 🎯 SEUIL CRITIQUE
         # =========================
 
         st.subheader("🎯 Seuil pour produire une pièce en plus")
 
-        base_df = simulate()
-        base_prod = len(base_df)
+        base_prod = len(simulate())
 
-        seuil = None
-
-        for extra in range(1, 121):  # test jusqu'à +2h
-
-            original_end = END_TIME
-            globals()["END_TIME"] = original_end + extra
-
-            df_test = simulate()
-
-            globals()["END_TIME"] = original_end
-
-            if len(df_test) > base_prod:
-                seuil = extra
-                break
+        seuil = next(
+            (extra for extra in range(1, 121)
+             if len(simulate_with_overtime(extra)) > base_prod),
+            None
+        )
 
         if seuil:
-            st.success(f"👉 +{seuil} min permet de produire +1 pièce")
+            st.success(f"👉 +{seuil} min → +1 pièce")
         else:
-            st.warning("👉 Même avec +2h, pas de pièce supplémentaire")
+            st.warning("👉 Pas de gain même avec +2h")
 
         # =========================
-        # ⏱️ DERNIÈRE PIÈCE POSSIBLE
+        # ⏱️ DERNIÈRE PIÈCE
         # =========================
-
-        st.subheader("⏱️ Dernière pièce possible")
 
         if seuil:
 
-            original_end = END_TIME
-            globals()["END_TIME"] = original_end + seuil
-
-            df_final = simulate()
-
-            globals()["END_TIME"] = original_end
-
+            df_final = simulate_with_overtime(seuil)
             last_piece = df_final.iloc[-1]
 
-            st.write("👉 Dernière pièce ajoutée :")
-
+            st.subheader("⏱️ Dernière pièce ajoutée")
             st.dataframe(pd.DataFrame([last_piece]))
-
-            fin_deco = last_piece["Fin Déco"]
-
-            st.info(f"👉 Cette pièce se termine à {fin_deco}")
+            st.info(f"👉 Fin à {last_piece['Fin Déco']}")
 
         # =========================
-        # MIX ANNUEL OPTIMAL
+        # 🧠 MIX ANNUEL
         # =========================
 
-        st.subheader(" Mix annuel optimal (C: Cloison ; V: Cuve)")
+        st.subheader("🧠 Mix annuel optimal (C=cloison, V=cuve)")
 
         configs = {
             "CCVV": ["cloison", "cloison", "cuve", "cuve"],
             "CVVC": ["cuve", "cloison", "cloison", "cuve"],
             "CVCV": ["cuve", "cloison", "cuve", "cloison"],
             "VVCC": ["cuve", "cuve", "cloison", "cloison"],
-            "Actu": ["cloison", "cuve", "cloison", "cuve"],
+            "Actuel": ["cloison", "cuve", "cloison", "cuve"],
         }
 
         mix_results = []
 
         for name, pattern in configs.items():
 
-            performances = []
+            perf = []
 
             for lat in range(0, 11):
 
                 lat_orig = latence_max
                 globals()["latence_max"] = lat
 
-                results_alt = []
+                count = 0
                 last_four_end = START_TIME
                 last_deco_end = START_TIME
                 i = 0
@@ -465,12 +422,10 @@ with tab2:
                     data = PRODUITS[produit]
 
                     four_time = data["four"] + 2 if i < 4 else data["four"]
-
                     start_four = START_TIME if i == 0 else last_four_end + GAP_FOUR
 
                     end_four = start_four + four_time
-                    start_refroid = end_four
-                    end_refroid = start_refroid + data["refroid"]
+                    end_refroid = end_four + data["refroid"]
 
                     start_deco = max(end_refroid, last_deco_end)
 
@@ -481,12 +436,9 @@ with tab2:
 
                     if latence > lat:
                         shift = latence - lat
-
                         start_four += shift
                         end_four += shift
-                        start_refroid += shift
                         end_refroid += shift
-
                         start_deco = max(end_refroid, last_deco_end)
 
                     end_deco = start_deco + data["deco"]
@@ -494,27 +446,24 @@ with tab2:
                     if end_deco > END_TIME:
                         break
 
-                    results_alt.append(1)
-
+                    count += 1
                     last_four_end = end_four
                     last_deco_end = end_deco
                     i += 1
 
                 globals()["latence_max"] = lat_orig
-
-                performances.append(len(results_alt))
+                perf.append(count)
 
             mix_results.append({
                 "Configuration": name,
-                "Production moyenne": round(sum(performances)/len(performances), 1),
-                "Production min": min(performances),
-                "Production max": max(performances),
-                "Variabilité": max(performances) - min(performances)
+                "Moyenne": round(sum(perf)/len(perf), 1),
+                "Min": min(perf),
+                "Max": max(perf),
+                "Variabilité": max(perf) - min(perf)
             })
 
         df_mix = pd.DataFrame(mix_results).sort_values(
-            by=["Production moyenne", "Production min"],
-            ascending=False
+            by=["Moyenne", "Min"], ascending=False
         )
 
         st.dataframe(df_mix)
@@ -522,10 +471,6 @@ with tab2:
         best = df_mix.iloc[0]
 
         st.success(
-            f"""
-            Mix recommandé annuel : {best['Configuration']}
-            ✔ Moyenne : {best['Production moyenne']}
-            ✔ Pire cas : {best['Production min']}
-            ✔ Variabilité : {best['Variabilité']}
-            """
+            f"🏆 Mix recommandé : {best['Configuration']} "
+            f"(moy={best['Moyenne']} | min={best['Min']})"
         )
