@@ -24,7 +24,7 @@ PAUSE_END = 13 * 60
 # TABS
 # =========================
 
-tab1, tab2, tab3 = st.tabs(["Simulation P10", "Optimisation", "Analyse"])
+tab1, tab2 = st.tabs(["Simulation P10", "Optimisation"])
 
 # =========================
 # SIMULATION (TON CODE INTACT)
