@@ -17,15 +17,20 @@ BRAS_SEQUENCE = [4, 1, 2, 3]
 END_TIME = 21 * 60 + 45
 GAP_FOUR = 1
 
+PAUSE_START = 12 * 60
+PAUSE_END = 13 * 60
+
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10")
+st.title("🔥 Simulateur P10 avec pause midi")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 mode = st.selectbox("Mode", ["Optimisé (0 latence)", "Réel"])
 latence_max = st.slider("Latence max (min)", 0, 10, 10)
+
+pause_active = st.checkbox("Activer pause midi (12h-13h)", True)
 
 if jour == "Lundi":
     START_TIME = 6 * 60 + 25
@@ -72,7 +77,6 @@ def simulate():
         refroid = data["refroid"]
         deco = data["deco"]
 
-        # +2 min sur les 4 premiers cycles
         if i < 4:
             four_time = base_four + 2
         else:
@@ -103,9 +107,21 @@ def simulate():
         end_refroid = start_refroid + refroid
 
         start_deco = max(end_refroid, last_deco_end)
+
+        # =====================
+        # PAUSE MIDI
+        # =====================
+
+        if pause_active:
+            if PAUSE_START <= start_deco < PAUSE_END:
+                start_deco = PAUSE_END  # report à 13h
+
         latence = start_deco - end_refroid
 
+        # =====================
         # CONTRAINTE LATENCE
+        # =====================
+
         if latence > latence_max:
             retard = latence - latence_max
 
@@ -115,6 +131,11 @@ def simulate():
             end_refroid += retard
 
             start_deco = max(end_refroid, last_deco_end)
+
+            if pause_active:
+                if PAUSE_START <= start_deco < PAUSE_END:
+                    start_deco = PAUSE_END
+
             latence = start_deco - end_refroid
 
         end_deco = start_deco + deco
@@ -194,62 +215,28 @@ if st.button("Lancer la simulation"):
 
     df = simulate()
 
-    # KPI
-    nb_cuves = len(df[df["Produit"] == "cuve"])
-    nb_cloisons = len(df[df["Produit"] == "cloison"])
-
-    total_four_time = sum(
-        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
-        for _, r in df.iterrows()
-    )
-
-    total_available_time = END_TIME - START_TIME
-    taux_four = (total_four_time / total_available_time) * 100
-
-    # KPI AFFICHAGE
-    st.subheader("📊 Production")
-
-    col1, col2 = st.columns(2)
-    col1.metric("Cuves", nb_cuves)
-    col2.metric("Cloisons", nb_cloisons)
-
-    st.subheader("🔥 Utilisation du four")
-    st.metric("Taux (%)", round(taux_four, 1))
-
-    # TABLEAU
-    st.subheader("📋 Détail")
+    st.subheader("📋 Résultat")
     st.dataframe(df)
 
-    # GANTT
-    st.subheader("📊 Diagramme de Gantt")
+    st.subheader("📊 Gantt")
 
     gantt_df = build_gantt(df)
 
-    if gantt_df.empty:
-        st.warning("Aucune donnée à afficher")
-    else:
+    fig = px.timeline(
+        gantt_df,
+        x_start="Start",
+        x_end="Finish",
+        y="Task",
+        color="Type",
+        color_discrete_map={
+            "Four": "green",
+            "Refroid": "blue",
+            "Déco": "purple",
+            "LATENCE": "red"
+        }
+    )
 
-        fig = px.timeline(
-            gantt_df,
-            x_start="Start",
-            x_end="Finish",
-            y="Task",
-            color="Type",
-            color_discrete_map={
-                "Four": "green",
-                "Refroid": "blue",
-                "Déco": "purple",
-                "LATENCE": "red"
-            }
-        )
+    fig.update_yaxes(autorange="reversed")
+    fig.update_layout(xaxis=dict(tickformat="%H:%M"))
 
-        fig.update_yaxes(autorange="reversed")
-
-        fig.update_layout(
-            xaxis=dict(
-                tickformat="%H:%M",
-                title="Heures"
-            )
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
