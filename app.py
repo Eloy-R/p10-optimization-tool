@@ -32,7 +32,7 @@ tab1, tab2 = st.tabs(["Simulation P10", "Optimisation"])
 
 with tab1:
 
-    st.title("🔥 Simulateur P10 - Mode réel")
+    st.title("Simulateur P10 - Production")
 
     jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
     latence_max = st.slider("Latence max (min)", 0, 10, 10)
