@@ -14,14 +14,14 @@ BRAS_SEQUENCE = [4, 1, 2, 3]
 
 END_TIME = 21 * 60 + 45
 
-GAP_FOUR = 1
+GAP_FOUR = 1  # 1 min entre fin four et début suivant
 
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Version terrain finale")
+st.title("🔥 Simulateur P10 - Version finale validée terrain")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 
@@ -74,7 +74,7 @@ def simulate():
         target_start_four = target_end_four - base_four_time
 
         # =====================
-        # CONTRAINTE FOUR
+        # ETAPE 1 — start_four provisoire
         # =====================
 
         if i == 0:
@@ -84,7 +84,7 @@ def simulate():
             start_four = max(target_start_four, min_start_four)
 
         # =====================
-        # 🔥 REGLE +2 MIN
+        # ETAPE 2 — règle +2 min
         # =====================
 
         if i == 0:
@@ -97,20 +97,26 @@ def simulate():
             else:
                 four_time = base_four_time
 
+        # =====================
+        # ETAPE 3 — calcul final
+        # =====================
+
         end_four = start_four + four_time
 
         if end_four > END_TIME:
             break
 
         # =====================
-        # REFROID
+        # REFROID (immédiat)
         # =====================
+
         start_refroid = end_four
         end_refroid = start_refroid + data["refroid"]
 
         # =====================
         # DECO
         # =====================
+
         start_deco = max(end_refroid, last_deco_end)
         end_deco = start_deco + data["deco"]
 
@@ -122,6 +128,7 @@ def simulate():
         # =====================
         # SAVE
         # =====================
+
         results.append({
             "Bras": bras,
             "Produit": produit,
