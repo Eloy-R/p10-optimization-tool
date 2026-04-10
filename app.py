@@ -240,81 +240,74 @@ with tab2:
         best_score = -999
         best_config = None
 
-        # 🔁 paramètres testés
         pauses = [
-            ("Pas de pause", False, None),
+            ("Pas de pause", False, 0),
             ("Pause 30 min", True, 30),
             ("Pause 1h", True, 60),
         ]
 
-        latences = range(0, 11)  # 0 → 10 min
-        overtime_options = [0, 15, 30, 45, 60]  # minutes en plus
+        latences = range(0, 11)
 
         for pause_name, pause_active_val, pause_duree in pauses:
 
             for lat in latences:
 
-                for overtime in overtime_options:
+                # 🔥 backup valeurs globales (SANS global keyword)
+                pause_end_original = PAUSE_END
+                latence_original = latence_max
 
-                    # 🔥 adaption dynamique de fin de journée
-                    global END_TIME
-                    original_end = END_TIME
-                    END_TIME = original_end + overtime
+                # 🔥 pause dynamique
+                if pause_active_val:
+                    pause_end_test = PAUSE_START + pause_duree
+                else:
+                    pause_end_test = PAUSE_START
 
-                    # 🔥 adaptation pause dynamique
-                    global PAUSE_END
-                    if pause_active_val:
-                        PAUSE_END = PAUSE_START + (pause_duree or 60)
-                    else:
-                        PAUSE_END = PAUSE_START  # pas de pause
+                # ⚠️ on injecte temporairement
+                globals()["PAUSE_END"] = pause_end_test
+                globals()["latence_max"] = lat
 
-                    # 🔥 appel simulateur (INTACT)
-                    df = simulate()
+                # 🔥 appel simulateur (INTOUCHABLE)
+                df = simulate()
 
-                    # reset END_TIME
-                    END_TIME = original_end
+                # 🔥 restore valeurs
+                globals()["PAUSE_END"] = pause_end_original
+                globals()["latence_max"] = latence_original
 
-                    if df.empty:
-                        continue
+                if df.empty:
+                    continue
 
-                    # KPI
-                    nb_cuves = len(df[df["Produit"] == "cuve"])
-                    nb_cloisons = len(df[df["Produit"] == "cloison"])
-                    total_prod = nb_cuves + nb_cloisons
+                # KPI
+                nb_cuves = len(df[df["Produit"] == "cuve"])
+                nb_cloisons = len(df[df["Produit"] == "cloison"])
+                total_prod = nb_cuves + nb_cloisons
 
-                    total_four_time = sum(
-                        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
-                        for _, r in df.iterrows()
-                    )
+                total_four_time = sum(
+                    to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+                    for _, r in df.iterrows()
+                )
 
-                    total_available_time = END_TIME - START_TIME + overtime
-                    taux_four = (total_four_time / total_available_time) * 100
+                total_available_time = END_TIME - START_TIME
+                taux_four = (total_four_time / total_available_time) * 100
 
-                    lat_moy = df["Latence (min)"].mean()
+                lat_moy = df["Latence (min)"].mean()
 
-                    # 🎯 score multi-critères
-                    score = (
-                        total_prod * 100
-                        + taux_four
-                        - lat_moy * 2
-                        - overtime * 0.5
-                    )
+                # 🎯 score
+                score = total_prod * 100 + taux_four - lat_moy * 2
 
-                    results.append({
-                        "Pause": pause_name,
-                        "Latence max": lat,
-                        "Overtime (min)": overtime,
-                        "Cuves": nb_cuves,
-                        "Cloisons": nb_cloisons,
-                        "Total": total_prod,
-                        "Taux four (%)": round(taux_four, 1),
-                        "Latence moy": round(lat_moy, 2),
-                        "Score": round(score, 1)
-                    })
+                results.append({
+                    "Pause": pause_name,
+                    "Latence max": lat,
+                    "Cuves": nb_cuves,
+                    "Cloisons": nb_cloisons,
+                    "Total": total_prod,
+                    "Taux four (%)": round(taux_four, 1),
+                    "Latence moy": round(lat_moy, 2),
+                    "Score": round(score, 1)
+                })
 
-                    if score > best_score:
-                        best_score = score
-                        best_config = results[-1]
+                if score > best_score:
+                    best_score = score
+                    best_config = results[-1]
 
         df_results = pd.DataFrame(results).sort_values(by="Score", ascending=False)
 
@@ -327,25 +320,23 @@ with tab2:
             f"""
             🔥 {best_config['Pause']}
             - Latence max : {best_config['Latence max']} min
-            - Overtime : {best_config['Overtime (min)']} min
             - Production : {best_config['Total']} pièces
             - Taux four : {best_config['Taux four (%)']}%
             """
         )
 
-        # 🔥 recommandation overtime intelligente
+        # 💡 insight simple
         st.subheader("💡 Insight")
 
-        top = df_results.head(5)
+        best_rows = df_results.head(5)
 
-        for i in range(1, len(top)):
-            prev = top.iloc[i-1]
-            curr = top.iloc[i]
+        for i in range(1, len(best_rows)):
+            prev = best_rows.iloc[i-1]
+            curr = best_rows.iloc[i]
 
             if curr["Total"] > prev["Total"]:
                 gain = curr["Total"] - prev["Total"]
-                overtime = curr["Overtime (min)"]
 
                 st.info(
-                    f"👉 +{overtime} min permet de produire +{gain} pièce(s)"
+                    f"👉 En augmentant la latence à {curr['Latence max']} min → +{gain} pièce(s)"
                 )
