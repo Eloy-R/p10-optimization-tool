@@ -177,6 +177,7 @@ with tab1:
     if st.button("Lancer la simulation"):
 
         df = simulate()
+        st.session_state["df"] = df
 
         nb_cuves = len(df[df["Produit"] == "cuve"])
         nb_cloisons = len(df[df["Produit"] == "cloison"])
@@ -394,11 +395,15 @@ with tab3:
 
     st.title("🧠 Analyse & Aide à la décision P10")
 
-    try:
-        df
-    except:
-        st.warning("👉 Lance une simulation d'abord")
+    # =========================
+    # 🔥 RÉCUPÉRATION DF (FIX)
+    # =========================
+
+    if "df" not in st.session_state:
+        st.warning("👉 Lance une simulation dans l'onglet Simulation P10")
         st.stop()
+
+    df = st.session_state["df"]
 
     # =========================
     # 📊 1. VUE GLOBALE
@@ -434,15 +439,15 @@ with tab3:
 
     if lat_moy > 5:
         problems.append("Latence élevée → déco saturé")
-        reco.append("Réduire latence ou décaler entrée four")
+        reco.append("Réduire la latence max ou décaler entrée four")
 
     if taux_four < 65:
         problems.append("Four sous-utilisé")
-        reco.append("Augmenter cadence four")
+        reco.append("Augmenter cadence du four")
 
     if taux_four > 80:
-        problems.append("Four surchargé")
-        reco.append("Risque saturation déco")
+        problems.append("Four très chargé")
+        reco.append("Attention saturation du déco")
 
     impacted = df[
         df["Début Déco"].apply(lambda t: 12 <= int(t[:2]) < 13)
@@ -453,24 +458,30 @@ with tab3:
         reco.append("Tester pause à 11h30 ou 12h30")
 
     st.write("### 🚨 Problèmes")
-    for p in problems:
-        st.error(p)
+    if problems:
+        for p in problems:
+            st.error(p)
+    else:
+        st.success("Aucun problème majeur")
 
     st.write("### 🚀 Recommandations")
-    for r in reco:
-        st.info(r)
+    if reco:
+        for r in reco:
+            st.info(r)
+    else:
+        st.success("Configuration déjà optimisée")
 
     # =========================
-    # 🔄 3. AVANT / APRES
+    # 🔄 3. AVANT / APRÈS
     # =========================
 
     st.subheader("🔄 Simulation avant / après")
 
     if st.button("Tester amélioration automatique"):
 
-        # test simple : latence 10 vs latence 5
         lat_orig = latence_max
 
+        # test simple : latence plus stricte
         globals()["latence_max"] = 5
         df_new = simulate()
         globals()["latence_max"] = lat_orig
@@ -483,13 +494,15 @@ with tab3:
 
         if prod_new > prod_old:
             st.success(f"👉 Gain de {prod_new - prod_old} pièces")
+        elif prod_new < prod_old:
+            st.warning(f"👉 Perte de {prod_old - prod_new} pièces")
         else:
-            st.warning("👉 Pas d'amélioration")
+            st.info("👉 Aucun changement")
 
         st.dataframe(df_new)
 
     # =========================
-    # 🧠 4. MIX ANNUEL EXPERT
+    # 🧠 4. MIX ANNUEL
     # =========================
 
     st.subheader("🧠 Mix annuel optimal")
