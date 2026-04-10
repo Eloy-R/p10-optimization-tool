@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # =========================
-# PARAMETRES PRODUITS
+# PARAMETRES
 # =========================
 
 PRODUITS = {
@@ -27,14 +27,13 @@ END_TIME = 21 * 60 + 45
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Optimisation industrielle")
+st.title("🔥 Simulateur P10 - Version industrielle")
 
 jour = st.selectbox("Jour", list(HORAIRES.keys()))
-pause_enabled = st.checkbox("Pause midi", True)
-pause_duration = st.selectbox("Durée pause", [30, 60])
-pause_mode = st.selectbox("Mode pause", ["deco_only", "full_stop"])
 
-SEUIL_LATENCE = st.slider("Seuil max latence (min)", 0, 30, 10)
+pause_enabled = st.checkbox("Pause midi", True)
+pause_duration = st.selectbox("Durée pause (min)", [30, 60])
+pause_mode = st.selectbox("Mode pause", ["deco_only", "full_stop"])
 
 START_TIME = HORAIRES[jour]
 
@@ -47,6 +46,10 @@ def format_time(minutes):
     h = int(minutes // 60)
     m = int(minutes % 60)
     return f"{h:02d}:{m:02d}"
+
+
+def to_minutes(t):
+    return int(t[:2]) * 60 + int(t[3:])
 
 
 def apply_pause(time, pause_start):
@@ -62,7 +65,7 @@ def apply_pause(time, pause_start):
 
 
 # =========================
-# SIMULATION AVEC OPTIMISATION
+# SIMULATION
 # =========================
 
 def simulate():
@@ -80,26 +83,24 @@ def simulate():
         bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
-        # FOUR TIME
+        # FOUR
         four_time = data["four"]
         if i < 4:
             four_time += 2
-
-        # =====================
-        # PREVISION (clé optimisation)
-        # =====================
 
         start_four = last_four_end
         end_four = start_four + four_time
 
         end_refroid = end_four + data["refroid"]
 
+        # =====================
+        # CONTRAINTE LATENCE CUVE
+        # =====================
         start_deco_estime = max(end_refroid, last_deco_end)
         latence_estimee = start_deco_estime - end_refroid
 
-        # 🔥 OPTIMISATION
-        if latence_estimee > SEUIL_LATENCE:
-            decalage = latence_estimee - SEUIL_LATENCE
+        if produit == "cuve" and latence_estimee > 20:
+            decalage = latence_estimee - 20
             start_four += decalage
             end_four += decalage
             end_refroid += decalage
@@ -112,14 +113,9 @@ def simulate():
             end_four = start_four + four_time
             end_refroid = end_four + data["refroid"]
 
-        # STOP JOURNEE
+        # STOP FOUR
         if end_four > END_TIME:
             break
-
-        # =====================
-        # REFROID
-        # =====================
-        start_refroid = end_four
 
         # =====================
         # DECO
@@ -131,6 +127,10 @@ def simulate():
 
         latence = start_deco - end_refroid
 
+        # STOP JOURNEE
+        if end_deco > END_TIME:
+            break
+
         # =====================
         # SAVE
         # =====================
@@ -139,14 +139,13 @@ def simulate():
             "Produit": produit,
             "Début Four": format_time(start_four),
             "Fin Four": format_time(end_four),
-            "Début Refroid": format_time(start_refroid),
+            "Début Refroid": format_time(end_four),
             "Fin Refroid": format_time(end_refroid),
             "Début Déco": format_time(start_deco),
             "Fin Déco": format_time(end_deco),
             "Latence (min)": latence
         })
 
-        # UPDATE
         last_four_end = end_four
         last_deco_end = end_deco
 
@@ -167,11 +166,8 @@ if st.button("Lancer la simulation"):
     nb_cuves = len(df[df["Produit"] == "cuve"])
     nb_cloisons = len(df[df["Produit"] == "cloison"])
 
-    def to_min(t):
-        return int(t[:2]) * 60 + int(t[3:])
-
     total_four_time = sum(
-        to_min(r["Fin Four"]) - to_min(r["Début Four"])
+        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
         for _, r in df.iterrows()
     )
 
@@ -180,7 +176,10 @@ if st.button("Lancer la simulation"):
 
     latence_moy = df["Latence (min)"].mean()
     latence_max = df["Latence (min)"].max()
-    latence_critique = (df["Latence (min)"] > SEUIL_LATENCE).mean() * 100
+
+    # Vérif contrainte cuve
+    df_cuves = df[df["Produit"] == "cuve"]
+    non_conformes = (df_cuves["Latence (min)"] > 20).sum()
 
     # =========================
     # AFFICHAGE
@@ -198,7 +197,7 @@ if st.button("Lancer la simulation"):
     col4, col5, col6 = st.columns(3)
     col4.metric("Latence moyenne", round(latence_moy, 1))
     col5.metric("Latence max", latence_max)
-    col6.metric("% latence critique", round(latence_critique, 1))
+    col6.metric("Cuves non conformes", non_conformes)
 
     st.subheader("📋 Détail complet")
 
