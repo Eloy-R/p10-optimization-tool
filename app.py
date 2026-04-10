@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
 
 # =========================
 # PARAMETRES
@@ -42,10 +43,10 @@ def format_time(m):
 def to_minutes(t):
     return int(t[:2]) * 60 + int(t[3:])
 
-def to_hour_float(t):
+def to_datetime(t):
     h = int(t[:2])
     m = int(t[3:])
-    return h + m / 60
+    return datetime(2024, 1, 1, h, m)
 
 
 # =========================
@@ -155,30 +156,30 @@ def build_gantt(df):
 
         tasks.append({
             "Task": label,
-            "Start": to_hour_float(row["Début Four"]),
-            "Finish": to_hour_float(row["Fin Four"]),
+            "Start": to_datetime(row["Début Four"]),
+            "Finish": to_datetime(row["Fin Four"]),
             "Type": "Four"
         })
 
         tasks.append({
             "Task": label,
-            "Start": to_hour_float(row["Début Refroid"]),
-            "Finish": to_hour_float(row["Fin Refroid"]),
+            "Start": to_datetime(row["Début Refroid"]),
+            "Finish": to_datetime(row["Fin Refroid"]),
             "Type": "Refroid"
         })
 
         tasks.append({
             "Task": label,
-            "Start": to_hour_float(row["Début Déco"]),
-            "Finish": to_hour_float(row["Fin Déco"]),
+            "Start": to_datetime(row["Début Déco"]),
+            "Finish": to_datetime(row["Fin Déco"]),
             "Type": "Déco"
         })
 
         if row["Latence (min)"] > 0:
             tasks.append({
                 "Task": label,
-                "Start": to_hour_float(row["Fin Refroid"]),
-                "Finish": to_hour_float(row["Début Déco"]),
+                "Start": to_datetime(row["Fin Refroid"]),
+                "Finish": to_datetime(row["Début Déco"]),
                 "Type": "LATENCE"
             })
 
@@ -205,7 +206,7 @@ if st.button("Lancer la simulation"):
     total_available_time = END_TIME - START_TIME
     taux_four = (total_four_time / total_available_time) * 100
 
-    # AFFICHAGE KPI
+    # KPI AFFICHAGE
     st.subheader("📊 Production")
 
     col1, col2 = st.columns(2)
@@ -227,6 +228,7 @@ if st.button("Lancer la simulation"):
     if gantt_df.empty:
         st.warning("Aucune donnée à afficher")
     else:
+
         fig = px.timeline(
             gantt_df,
             x_start="Start",
@@ -245,9 +247,7 @@ if st.button("Lancer la simulation"):
 
         fig.update_layout(
             xaxis=dict(
-                range=[4.87, 22],
-                tickvals=list(range(5, 23)),
-                ticktext=[f"{h:02d}:00" for h in range(5, 23)],
+                tickformat="%H:%M",
                 title="Heures"
             )
         )
