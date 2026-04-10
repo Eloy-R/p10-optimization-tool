@@ -22,18 +22,17 @@ HORAIRES = {
 
 END_TIME = 21 * 60 + 45
 
-# 🔥 NOUVEAU
-TRANSITION = 1  # minute entre zones
+TRANSITION = 1
+ROTATION = 1  # 🔥 ajout clé
 
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Flux réaliste avec transitions")
+st.title("🔥 Simulateur P10 - Version correcte")
 
 jour = st.selectbox("Jour de production", list(HORAIRES.keys()))
-
 START_TIME = HORAIRES[jour]
 
 
@@ -59,6 +58,7 @@ def simulate():
     results = []
 
     last_four_end = START_TIME
+    last_four_start = START_TIME - ROTATION  # 🔥 important
     last_deco_end = START_TIME
 
     i = 0
@@ -74,34 +74,39 @@ def simulate():
             four_time += 2
 
         # =====================
-        # CALCUL OPTIMAL
+        # CALCUL OPTIMAL (ton code intact)
         # =====================
 
         target_start_deco = last_deco_end
-
-        # 🔥 intégrer transition AVANT déco
         target_end_refroid = target_start_deco - TRANSITION
-
-        # 🔥 intégrer transition APRES four
         target_end_four = target_end_refroid - data["refroid"] - TRANSITION
-
         target_start_four = target_end_four - four_time
 
-        # Respect contrainte four
-        start_four = max(last_four_end, target_start_four)
+        # =====================
+        # 🔥 CONTRAINTES (ajout propre)
+        # =====================
+
+        min_start_rotation = last_four_start + ROTATION
+
+        start_four = max(
+            last_four_end,
+            target_start_four,
+            min_start_rotation  # 🔥 ajout clé
+        )
+
         end_four = start_four + four_time
 
         if end_four > END_TIME:
             break
 
         # =====================
-        # REFROID (avec transition)
+        # REFROID
         # =====================
         start_refroid = end_four + TRANSITION
         end_refroid = start_refroid + data["refroid"]
 
         # =====================
-        # DECO (avec transition)
+        # DECO
         # =====================
         start_deco = max(end_refroid + TRANSITION, last_deco_end)
         end_deco = start_deco + data["deco"]
@@ -127,6 +132,7 @@ def simulate():
         })
 
         last_four_end = end_four
+        last_four_start = start_four  # 🔥 update clé
         last_deco_end = end_deco
 
         i += 1
@@ -155,10 +161,6 @@ if st.button("Lancer la simulation"):
 
     latence_moy = df["Latence (min)"].mean()
     latence_max = df["Latence (min)"].max()
-
-    # =========================
-    # AFFICHAGE
-    # =========================
 
     st.subheader("📊 Performance")
 
