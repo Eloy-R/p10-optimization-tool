@@ -3,14 +3,23 @@ import pandas as pd
 
 st.set_page_config(layout="wide")
 
-st.title("🏭 P10 - Simulation (logique heures uniquement)")
+st.title("🏭 P10 - Simulation Production")
 
 # =============================
 # PARAMÈTRES
 # =============================
 
 MAX_LATENCE = st.sidebar.slider("Latence max (min)", 0, 60, 20)
-pause_active = st.sidebar.checkbox("Pause midi 12h-13h", True)
+
+pause_duration = st.sidebar.selectbox(
+    "Durée pause midi",
+    [0, 30, 60]
+)
+
+pause_type = st.sidebar.selectbox(
+    "Type de pause",
+    ["Aucune", "Tout à l'arrêt", "Décoffrage uniquement"]
+)
 
 # =============================
 # OUTILS TEMPS
@@ -33,6 +42,7 @@ TIMES = {
     "cloison": {"four": 35, "cool": 45, "deco": 40}
 }
 
+# ⚠️ ordre réel carrousel
 BRAS_ORDER = [
     ("Bras 4", "cloison"),
     ("Bras 1", "cuve"),
@@ -40,14 +50,13 @@ BRAS_ORDER = [
     ("Bras 3", "cuve"),
 ]
 
-# temps en minutes
 start_time = to_minutes(6, 25)
 end_time = to_minutes(21, 45)
 
 pause_start = to_minutes(12, 0)
-pause_end = to_minutes(13, 0)
+pause_end = pause_start + pause_duration
 
-MOVE = 1  # 1 minute
+MOVE = 1  # minute entre bras
 
 # =============================
 # SIMULATION
@@ -68,30 +77,47 @@ def simulate():
         bras, prod = BRAS_ORDER[index % len(BRAS_ORDER)]
         t = TIMES[prod]
 
-        # premier cycle
+        # =============================
+        # TEMPS FOUR (+2 min premier cycle)
+        # =============================
         if not first_cycle_done[bras]:
             four_time = t["four"] + 2
             first_cycle_done[bras] = True
         else:
             four_time = t["four"]
 
-        # FOUR
         start_four = current_time
         end_four = start_four + four_time
 
+        # =============================
+        # PAUSE (cas tout à l’arrêt)
+        # =============================
+        if pause_type == "Tout à l'arrêt":
+            if start_four < pause_end and end_four > pause_start:
+                start_four = max(start_four, pause_end)
+                end_four = start_four + four_time
+
+        # =============================
         # REFROID
+        # =============================
         end_cool = end_four + t["cool"]
 
-        # pause midi
-        if pause_active:
+        # =============================
+        # GESTION PAUSE DÉCO
+        # =============================
+        if pause_type == "Décoffrage uniquement":
             if deco_available >= pause_start and deco_available < pause_end:
                 deco_available = pause_end
 
+        # =============================
         # LATENCE
+        # =============================
         start_deco = max(end_cool, deco_available)
         latence = start_deco - end_cool
 
+        # =============================
         # AJUSTEMENT LATENCE
+        # =============================
         if latence > MAX_LATENCE:
             delay = latence - MAX_LATENCE
             current_time += delay
@@ -101,8 +127,16 @@ def simulate():
             end_cool = end_four + t["cool"]
             start_deco = max(end_cool, deco_available)
 
-        # DECO
+        # =============================
+        # DECOFFRAGE
+        # =============================
         end_deco = start_deco + t["deco"]
+
+        # sécurité pause déco
+        if pause_type != "Aucune":
+            if start_deco < pause_end and start_deco >= pause_start:
+                start_deco = pause_end
+                end_deco = start_deco + t["deco"]
 
         if end_deco > end_time:
             break
@@ -118,7 +152,10 @@ def simulate():
             "Latence": latence
         })
 
-        current_time = end_four + MOVE
+        # =============================
+        # AVANCEMENT CARROUSEL
+        # =============================
+        current_time = current_time + MOVE
         deco_available = end_deco
         index += 1
 
@@ -141,14 +178,8 @@ df_display = df.copy()
 for col in ["Four début","Four fin","Refroid fin","Déco début","Déco fin"]:
     df_display[col] = df_display[col].apply(to_hhmm)
 
-# tri propre
-df_display["Bras"] = pd.Categorical(
-    df_display["Bras"],
-    categories=["Bras 1", "Bras 2", "Bras 3", "Bras 4"],
-    ordered=True
-)
-
-df_display = df_display.sort_values(["Bras","Four début"]).reset_index(drop=True)
+# 🔥 ordre flux réel (PAS groupé)
+df_display = df_display.reset_index(drop=True)
 
 st.dataframe(df_display, use_container_width=True)
 
@@ -158,7 +189,8 @@ st.dataframe(df_display, use_container_width=True)
 
 st.subheader("📊 KPI")
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
-col1.metric("Production", len(df))
+col1.metric("Production totale", len(df))
 col2.metric("Latence max", int(df["Latence"].max()))
+col3.metric("Latence moyenne", int(df["Latence"].mean()))
