@@ -20,7 +20,7 @@ GAP_FOUR = 1
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Version complète")
+st.title("🔥 Simulateur P10")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 mode = st.selectbox("Mode", ["Optimisé (0 latence)", "Réel"])
@@ -41,6 +41,11 @@ def format_time(m):
 
 def to_minutes(t):
     return int(t[:2]) * 60 + int(t[3:])
+
+def to_hour_float(t):
+    h = int(t[:2])
+    m = int(t[3:])
+    return h + m / 60
 
 
 # =========================
@@ -66,16 +71,13 @@ def simulate():
         refroid = data["refroid"]
         deco = data["deco"]
 
-        # +2 min sur 4 premiers cycles
+        # +2 min sur les 4 premiers cycles
         if i < 4:
             four_time = base_four + 2
         else:
             four_time = base_four
 
-        # =====================
         # MODE
-        # =====================
-
         if mode == "Optimisé (0 latence)":
 
             target_start_deco = last_deco_end
@@ -89,16 +91,12 @@ def simulate():
                 start_four = max(target_start_four, last_four_end + GAP_FOUR)
 
         else:
-
             if i == 0:
                 start_four = START_TIME
             else:
                 start_four = last_four_end + GAP_FOUR
 
-        # =====================
         # FLUX
-        # =====================
-
         end_four = start_four + four_time
         start_refroid = end_four
         end_refroid = start_refroid + refroid
@@ -106,10 +104,7 @@ def simulate():
         start_deco = max(end_refroid, last_deco_end)
         latence = start_deco - end_refroid
 
-        # =====================
         # CONTRAINTE LATENCE
-        # =====================
-
         if latence > latence_max:
             retard = latence - latence_max
 
@@ -152,18 +147,12 @@ def simulate():
 
 def build_gantt(df):
 
-    def to_hour_float(t):
-        h = int(t[:2])
-        m = int(t[3:])
-        return h + m / 60
-
     tasks = []
 
     for _, row in df.iterrows():
 
         label = f"B{row['Bras']} - {row['Produit']}"
 
-        # FOUR
         tasks.append({
             "Task": label,
             "Start": to_hour_float(row["Début Four"]),
@@ -171,7 +160,6 @@ def build_gantt(df):
             "Type": "Four"
         })
 
-        # REFROID
         tasks.append({
             "Task": label,
             "Start": to_hour_float(row["Début Refroid"]),
@@ -179,7 +167,6 @@ def build_gantt(df):
             "Type": "Refroid"
         })
 
-        # DECO
         tasks.append({
             "Task": label,
             "Start": to_hour_float(row["Début Déco"]),
@@ -187,7 +174,6 @@ def build_gantt(df):
             "Type": "Déco"
         })
 
-        # LATENCE
         if row["Latence (min)"] > 0:
             tasks.append({
                 "Task": label,
@@ -197,6 +183,7 @@ def build_gantt(df):
             })
 
     return pd.DataFrame(tasks)
+
 
 # =========================
 # EXECUTION
@@ -233,42 +220,36 @@ if st.button("Lancer la simulation"):
     st.dataframe(df)
 
     # GANTT
-  st.subheader("📊 Diagramme de Gantt")
+    st.subheader("📊 Diagramme de Gantt")
 
-gantt_df = build_gantt(df)
+    gantt_df = build_gantt(df)
 
-if gantt_df.empty:
-    st.warning("Aucune donnée à afficher")
-else:
-
-    fig = px.timeline(
-        gantt_df,
-        x_start="Start",
-        x_end="Finish",
-        y="Task",
-        color="Type",
-        color_discrete_map={
-            "Four": "green",
-            "Refroid": "blue",
-            "Déco": "purple",
-            "LATENCE": "red"
-        }
-    )
-
-    fig.update_yaxes(autorange="reversed")
-
-    # 🔥 Axe propre sans date
-    fig.update_layout(
-        xaxis=dict(
-            range=[4.87, 22],  # 04:52 → 22:00
-            tickvals=list(range(5, 23)),
-            ticktext=[f"{h:02d}:00" for h in range(5, 23)],
-            title="Heures"
+    if gantt_df.empty:
+        st.warning("Aucune donnée à afficher")
+    else:
+        fig = px.timeline(
+            gantt_df,
+            x_start="Start",
+            x_end="Finish",
+            y="Task",
+            color="Type",
+            color_discrete_map={
+                "Four": "green",
+                "Refroid": "blue",
+                "Déco": "purple",
+                "LATENCE": "red"
+            }
         )
-    )
 
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_yaxes(autorange="reversed")
 
-    fig.update_yaxes(autorange="reversed")
+        fig.update_layout(
+            xaxis=dict(
+                range=[4.87, 22],
+                tickvals=list(range(5, 23)),
+                ticktext=[f"{h:02d}:00" for h in range(5, 23)],
+                title="Heures"
+            )
+        )
 
-    st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
