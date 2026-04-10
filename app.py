@@ -21,18 +21,16 @@ HORAIRES = {
 }
 
 END_TIME = 21 * 60 + 45
-
-ROTATION = 1  # 🔥 1 min entre chaque passage au four
+ROTATION = 1  # 🔥 clé : 1 min entre entrées
 
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Carrousel réaliste")
+st.title("🔥 Simulateur P10 - Carrousel correct")
 
 jour = st.selectbox("Jour de production", list(HORAIRES.keys()))
-
 START_TIME = HORAIRES[jour]
 
 
@@ -57,7 +55,6 @@ def to_minutes(t):
 def simulate():
     results = []
 
-    last_four_end = START_TIME
     last_four_start = START_TIME - ROTATION
     last_deco_end = START_TIME
 
@@ -68,26 +65,15 @@ def simulate():
         bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
+        # =====================
+        # CARROUSEL (clé 🔥)
+        # =====================
+        start_four = last_four_start + ROTATION
+
         # Temps four
         four_time = data["four"]
         if i < 4:
             four_time += 2
-
-        # =====================
-        # CONTRAINTE CARROUSEL (clé 🔥)
-        # =====================
-        min_start_four = last_four_start + ROTATION
-
-        # =====================
-        # CALCUL OPTIMAL
-        # =====================
-        target_start_deco = last_deco_end
-        target_end_refroid = target_start_deco
-        target_end_four = target_end_refroid - data["refroid"]
-        target_start_four = target_end_four - four_time
-
-        # On respecte carrousel + four
-        start_four = max(min_start_four, last_four_end, target_start_four)
 
         end_four = start_four + four_time
 
@@ -101,7 +87,7 @@ def simulate():
         end_refroid = start_refroid + data["refroid"]
 
         # =====================
-        # DECO
+        # DECO (goulot)
         # =====================
         start_deco = max(end_refroid, last_deco_end)
         end_deco = start_deco + data["deco"]
@@ -111,15 +97,11 @@ def simulate():
         if end_deco > END_TIME:
             break
 
-        # =====================
-        # SAVE
-        # =====================
         results.append({
             "Bras": bras,
             "Produit": produit,
             "Début Four": format_time(start_four),
             "Fin Four": format_time(end_four),
-            "Début Refroid": format_time(start_refroid),
             "Fin Refroid": format_time(end_refroid),
             "Début Déco": format_time(start_deco),
             "Fin Déco": format_time(end_deco),
@@ -127,7 +109,6 @@ def simulate():
         })
 
         last_four_start = start_four
-        last_four_end = end_four
         last_deco_end = end_deco
 
         i += 1
