@@ -629,3 +629,139 @@ with tab3:
     st.success(
         f"🏆 Meilleur mix : {best_mix['Configuration']} → {best_mix['Total']} pièces"
     )
+    # =========================
+    # 🧠 MIX OPTIMAL ANNUEL (EXPERT)
+    # =========================
+
+    st.subheader("🧠 Optimisation mix annuel (robustesse)")
+
+    configs = {
+        "CCVV": ["cloison", "cloison", "cuve", "cuve"],
+        "CVVC": ["cuve", "cloison", "cloison", "cuve"],
+        "CVCV": ["cuve", "cloison", "cuve", "cloison"],
+        "VVCC": ["cuve", "cuve", "cloison", "cloison"],
+        "CVCV2": ["cloison", "cuve", "cloison", "cuve"],
+    }
+
+    pauses = [
+        (False, None),   # pas de pause
+        (True, (12*60, 12*60+30)),
+        (True, (12*60, 13*60)),
+    ]
+
+    latences = range(0, 11)
+
+    annual_results = []
+
+    for name, pattern in configs.items():
+
+        performances = []
+
+        for pause_active_val, pause_window in pauses:
+
+            for lat in latences:
+
+                # backup
+                pause_start_orig = PAUSE_START
+                pause_end_orig = PAUSE_END
+                lat_orig = latence_max
+
+                # inject
+                if pause_active_val:
+                    globals()["PAUSE_START"] = pause_window[0]
+                    globals()["PAUSE_END"] = pause_window[1]
+                else:
+                    globals()["PAUSE_START"] = 0
+                    globals()["PAUSE_END"] = 0
+
+                globals()["latence_max"] = lat
+
+                # 🔁 simulation mix
+                results_alt = []
+                last_four_end = START_TIME
+                last_deco_end = START_TIME
+                i = 0
+
+                while True:
+
+                    produit = pattern[i % 4]
+                    data = PRODUITS[produit]
+
+                    four_time = data["four"] + 2 if i < 4 else data["four"]
+
+                    start_four = START_TIME if i == 0 else last_four_end + GAP_FOUR
+
+                    end_four = start_four + four_time
+                    start_refroid = end_four
+                    end_refroid = start_refroid + data["refroid"]
+
+                    start_deco = max(end_refroid, last_deco_end)
+
+                    if PAUSE_START <= start_deco < PAUSE_END:
+                        start_deco = PAUSE_END
+
+                    latence = start_deco - end_refroid
+
+                    if latence > lat:
+                        shift = latence - lat
+
+                        start_four += shift
+                        end_four += shift
+                        start_refroid += shift
+                        end_refroid += shift
+
+                        start_deco = max(end_refroid, last_deco_end)
+
+                        if PAUSE_START <= start_deco < PAUSE_END:
+                            start_deco = PAUSE_END
+
+                    end_deco = start_deco + data["deco"]
+
+                    if end_deco > END_TIME:
+                        break
+
+                    results_alt.append(1)
+
+                    last_four_end = end_four
+                    last_deco_end = end_deco
+                    i += 1
+
+                # restore
+                globals()["PAUSE_START"] = pause_start_orig
+                globals()["PAUSE_END"] = pause_end_orig
+                globals()["latence_max"] = lat_orig
+
+                performances.append(len(results_alt))
+
+        if len(performances) == 0:
+            continue
+
+        annual_results.append({
+            "Configuration": name,
+            "Production moyenne": round(sum(performances)/len(performances), 1),
+            "Production min": min(performances),
+            "Production max": max(performances),
+            "Variabilité": max(performances) - min(performances)
+        })
+
+    df_annual = pd.DataFrame(annual_results)
+
+    st.dataframe(df_annual.sort_values(by="Production moyenne", ascending=False))
+
+    # 🏆 choix robuste
+    best = df_annual.sort_values(
+        by=["Production moyenne", "Production min"],
+        ascending=False
+    ).iloc[0]
+
+    st.success(
+        f"""
+        🏆 Mix recommandé (annuel) : {best['Configuration']}
+        
+        ✔ Production moyenne : {best['Production moyenne']}
+        ✔ Pire cas : {best['Production min']}
+        ✔ Variabilité : {best['Variabilité']}
+        
+        👉 Recommandé pour changement saisonnier (été/hiver)
+        """
+    )
