@@ -225,74 +225,127 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
 # =========================
-# ONGLET OPTIMISATION (VIDE POUR L'INSTANT)
+# ONGLET OPTIMISATION ===================
 # =========================
 
 with tab2:
 
-    st.title("🚀 Optimisation production")
+    st.title("🚀 Optimisation avancée production")
 
-    st.markdown("### 🎯 Objectif : maximiser la production avec contrainte latence ≤ 10 min")
+    st.markdown("### 🎯 Maximiser la production sous contraintes")
 
-    if st.button("Lancer optimisation"):
-
-        scenarios = [
-            {"nom": "Pas de pause", "pause": False},
-            {"nom": "Pause 30 min", "pause": True, "duree": 30},
-            {"nom": "Pause 1h", "pause": True, "duree": 60},
-        ]
+    if st.button("Lancer optimisation avancée"):
 
         results = []
+        best_score = -999
+        best_config = None
 
-        for scen in scenarios:
+        # 🔁 paramètres testés
+        pauses = [
+            ("Pas de pause", False, None),
+            ("Pause 30 min", True, 30),
+            ("Pause 1h", True, 60),
+        ]
 
-            # 🔥 on garde ton simulateur tel quel
-            pause_active = scen["pause"]
+        latences = range(0, 11)  # 0 → 10 min
+        overtime_options = [0, 15, 30, 45, 60]  # minutes en plus
 
-            df = simulate()
+        for pause_name, pause_active_val, pause_duree in pauses:
 
-            if df.empty:
-                continue
+            for lat in latences:
 
-            # KPI
-            nb_cuves = len(df[df["Produit"] == "cuve"])
-            nb_cloisons = len(df[df["Produit"] == "cloison"])
-            total_prod = nb_cuves + nb_cloisons
+                for overtime in overtime_options:
 
-            total_four_time = sum(
-                to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
-                for _, r in df.iterrows()
-            )
+                    # 🔥 adaption dynamique de fin de journée
+                    global END_TIME
+                    original_end = END_TIME
+                    END_TIME = original_end + overtime
 
-            total_available_time = END_TIME - START_TIME
-            taux_four = (total_four_time / total_available_time) * 100
+                    # 🔥 adaptation pause dynamique
+                    global PAUSE_END
+                    if pause_active_val:
+                        PAUSE_END = PAUSE_START + (pause_duree or 60)
+                    else:
+                        PAUSE_END = PAUSE_START  # pas de pause
 
-            # score simple mais efficace
-            score = total_prod * 100 + taux_four
+                    # 🔥 appel simulateur (INTACT)
+                    df = simulate()
 
-            results.append({
-                "Scénario": scen["nom"],
-                "Cuves": nb_cuves,
-                "Cloisons": nb_cloisons,
-                "Total": total_prod,
-                "Utilisation four (%)": round(taux_four, 1),
-                "Score": round(score, 1)
-            })
+                    # reset END_TIME
+                    END_TIME = original_end
 
-        df_results = pd.DataFrame(results)
+                    if df.empty:
+                        continue
 
-        # tri par score
-        df_results = df_results.sort_values(by="Score", ascending=False)
+                    # KPI
+                    nb_cuves = len(df[df["Produit"] == "cuve"])
+                    nb_cloisons = len(df[df["Produit"] == "cloison"])
+                    total_prod = nb_cuves + nb_cloisons
 
-        st.subheader("📊 Comparaison des scénarios")
+                    total_four_time = sum(
+                        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+                        for _, r in df.iterrows()
+                    )
+
+                    total_available_time = END_TIME - START_TIME + overtime
+                    taux_four = (total_four_time / total_available_time) * 100
+
+                    lat_moy = df["Latence (min)"].mean()
+
+                    # 🎯 score multi-critères
+                    score = (
+                        total_prod * 100
+                        + taux_four
+                        - lat_moy * 2
+                        - overtime * 0.5
+                    )
+
+                    results.append({
+                        "Pause": pause_name,
+                        "Latence max": lat,
+                        "Overtime (min)": overtime,
+                        "Cuves": nb_cuves,
+                        "Cloisons": nb_cloisons,
+                        "Total": total_prod,
+                        "Taux four (%)": round(taux_four, 1),
+                        "Latence moy": round(lat_moy, 2),
+                        "Score": round(score, 1)
+                    })
+
+                    if score > best_score:
+                        best_score = score
+                        best_config = results[-1]
+
+        df_results = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+
+        st.subheader("📊 Tous les scénarios")
         st.dataframe(df_results)
-
-        # meilleur scénario
-        best = df_results.iloc[0]
 
         st.subheader("🏆 Meilleur scénario")
 
         st.success(
-            f"{best['Scénario']} → {int(best['Total'])} pièces | "
-            f"{best['Utilisation four (%)']}% utilisation four"
+            f"""
+            🔥 {best_config['Pause']}
+            - Latence max : {best_config['Latence max']} min
+            - Overtime : {best_config['Overtime (min)']} min
+            - Production : {best_config['Total']} pièces
+            - Taux four : {best_config['Taux four (%)']}%
+            """
         )
+
+        # 🔥 recommandation overtime intelligente
+        st.subheader("💡 Insight")
+
+        top = df_results.head(5)
+
+        for i in range(1, len(top)):
+            prev = top.iloc[i-1]
+            curr = top.iloc[i]
+
+            if curr["Total"] > prev["Total"]:
+                gain = curr["Total"] - prev["Total"]
+                overtime = curr["Overtime (min)"]
+
+                st.info(
+                    f"👉 +{overtime} min permet de produire +{gain} pièce(s)"
+                )
