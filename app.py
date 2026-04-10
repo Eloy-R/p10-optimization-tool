@@ -231,10 +231,10 @@ with tab1:
 
 with tab2:
 
-    st.title("🚀 Optimisation avancée production")
-    st.markdown("### 🎯 Maximiser production + utilisation four")
+    st.title("Optimisation avancée production")
+    st.markdown("### Maximiser production + utilisation four")
 
-    # 🔧 fonction centrale (évite répétition)
+    # 🔧 fonction centrale
     def simulate_with_overtime(extra):
         original_end = END_TIME
         globals()["END_TIME"] = original_end + extra
@@ -340,6 +340,7 @@ with tab2:
         st.subheader("⏱️ Overtime intelligent")
 
         overtime_range = [0, 15, 30, 45, 60]
+
         df_ot = pd.DataFrame([
             {"Overtime (min)": extra, "Production": len(simulate_with_overtime(extra))}
             for extra in overtime_range
@@ -347,30 +348,18 @@ with tab2:
 
         st.dataframe(df_ot)
 
+        seuil = None
+
         for i in range(1, len(df_ot)):
             if df_ot.iloc[i]["Production"] > df_ot.iloc[i-1]["Production"]:
-                st.info(
-                    f"👉 +{df_ot.iloc[i]['Overtime (min)']} min → "
-                    f"+{df_ot.iloc[i]['Production'] - df_ot.iloc[i-1]['Production']} pièce(s)"
-                )
+                seuil = df_ot.iloc[i]["Overtime (min)"]
+                gain = df_ot.iloc[i]["Production"] - df_ot.iloc[i-1]["Production"]
 
+                st.info(f"👉 +{seuil} min → +{gain} pièce(s)")
+                break
 
-    # =========================
-# 🎯 SEUIL UNIQUE ============
-# =========================
-
-base_prod = df_ot.iloc[0]["Production"]
-
-seuil = next(
-    (extra for extra in range(1, 121)
-     if len(simulate_with_overtime(extra)) > base_prod),
-    None
-)
-
-if seuil:
-    st.info(f"👉 +{seuil} min → +1 pièce")
-else:
-    st.warning("👉 Pas de gain même avec +2h")
+        if seuil is None:
+            st.warning("👉 Aucun gain même avec overtime")
 
         # =========================
         # ⏱️ DERNIÈRE PIÈCE
