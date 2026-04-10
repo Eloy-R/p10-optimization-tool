@@ -391,139 +391,39 @@ with tab2:
 
                 st.info(f"👉 +{extra} min permet +{gain} pièce(s)")
 
-with tab3:
+# =========================
+# 🧠 MIX ANNUEL OPTIMAL
+# =========================
 
-    st.title("🧠 Analyse & Aide à la décision P10")
+st.subheader("🧠 Mix annuel optimal (robustesse)")
 
-    # =========================
-    # 🔥 RÉCUPÉRATION DF (FIX)
-    # =========================
+configs = {
+    "CCVV": ["cloison", "cloison", "cuve", "cuve"],
+    "CVVC": ["cuve", "cloison", "cloison", "cuve"],
+    "CVCV": ["cuve", "cloison", "cuve", "cloison"],
+    "VVCC": ["cuve", "cuve", "cloison", "cloison"],
+    "Alt": ["cloison", "cuve", "cloison", "cuve"],
+}
 
-    if "df" not in st.session_state:
-        st.warning("👉 Lance une simulation dans l'onglet Simulation P10")
-        st.stop()
+# scénarios testés = conditions réelles
+latences = range(0, 11)
 
-    df = st.session_state["df"]
+mix_results = []
 
-    # =========================
-    # 📊 1. VUE GLOBALE
-    # =========================
+for name, pattern in configs.items():
 
-    st.subheader("📊 Vue globale")
+    performances = []
 
-    lat_moy = df["Latence (min)"].mean()
-    lat_max = df["Latence (min)"].max()
+    for lat in latences:
 
-    total_prod = len(df)
-
-    total_four_time = sum(
-        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
-        for _, r in df.iterrows()
-    )
-
-    taux_four = (total_four_time / (END_TIME - START_TIME)) * 100
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Production", total_prod)
-    col2.metric("Latence moy", round(lat_moy, 2))
-    col3.metric("Utilisation four (%)", round(taux_four, 1))
-
-    # =========================
-    # 🔍 2. DIAGNOSTIC
-    # =========================
-
-    st.subheader("🔍 Diagnostic")
-
-    problems = []
-    reco = []
-
-    if lat_moy > 5:
-        problems.append("Latence élevée → déco saturé")
-        reco.append("Réduire la latence max ou décaler entrée four")
-
-    if taux_four < 65:
-        problems.append("Four sous-utilisé")
-        reco.append("Augmenter cadence du four")
-
-    if taux_four > 80:
-        problems.append("Four très chargé")
-        reco.append("Attention saturation du déco")
-
-    impacted = df[
-        df["Début Déco"].apply(lambda t: 12 <= int(t[:2]) < 13)
-    ]
-
-    if len(impacted) > 0:
-        problems.append("Pause midi mal positionnée")
-        reco.append("Tester pause à 11h30 ou 12h30")
-
-    st.write("### 🚨 Problèmes")
-    if problems:
-        for p in problems:
-            st.error(p)
-    else:
-        st.success("Aucun problème majeur")
-
-    st.write("### 🚀 Recommandations")
-    if reco:
-        for r in reco:
-            st.info(r)
-    else:
-        st.success("Configuration déjà optimisée")
-
-    # =========================
-    # 🔄 3. AVANT / APRÈS
-    # =========================
-
-    st.subheader("🔄 Simulation avant / après")
-
-    if st.button("Tester amélioration automatique"):
-
+        # backup
         lat_orig = latence_max
+        globals()["latence_max"] = lat
 
-        # test simple : latence plus stricte
-        globals()["latence_max"] = 5
-        df_new = simulate()
-        globals()["latence_max"] = lat_orig
-
-        prod_old = len(df)
-        prod_new = len(df_new)
-
-        st.write(f"Avant : {prod_old} pièces")
-        st.write(f"Après : {prod_new} pièces")
-
-        if prod_new > prod_old:
-            st.success(f"👉 Gain de {prod_new - prod_old} pièces")
-        elif prod_new < prod_old:
-            st.warning(f"👉 Perte de {prod_old - prod_new} pièces")
-        else:
-            st.info("👉 Aucun changement")
-
-        st.dataframe(df_new)
-
-    # =========================
-    # 🧠 4. MIX ANNUEL
-    # =========================
-
-    st.subheader("🧠 Mix annuel optimal")
-
-    configs = {
-        "CCVV": ["cloison", "cloison", "cuve", "cuve"],
-        "CVVC": ["cuve", "cloison", "cloison", "cuve"],
-        "CVCV": ["cuve", "cloison", "cuve", "cloison"],
-        "VVCC": ["cuve", "cuve", "cloison", "cloison"],
-        "Alt": ["cloison", "cuve", "cloison", "cuve"],
-    }
-
-    results_mix = []
-
-    for name, pattern in configs.items():
-
-        count = 0
-
+        # simulation alternative
+        results_alt = []
         last_four_end = START_TIME
         last_deco_end = START_TIME
-
         i = 0
 
         while True:
@@ -546,8 +446,8 @@ with tab3:
 
             latence = start_deco - end_refroid
 
-            if latence > latence_max:
-                shift = latence - latence_max
+            if latence > lat:
+                shift = latence - lat
 
                 start_four += shift
                 end_four += shift
@@ -561,21 +461,41 @@ with tab3:
             if end_deco > END_TIME:
                 break
 
-            count += 1
+            results_alt.append(1)
 
             last_four_end = end_four
             last_deco_end = end_deco
             i += 1
 
-        results_mix.append({
-            "Config": name,
-            "Production": count
-        })
+        globals()["latence_max"] = lat_orig
 
-    df_mix = pd.DataFrame(results_mix).sort_values(by="Production", ascending=False)
+        performances.append(len(results_alt))
 
-    st.dataframe(df_mix)
+    mix_results.append({
+        "Configuration": name,
+        "Production moyenne": round(sum(performances)/len(performances), 1),
+        "Production min": min(performances),
+        "Production max": max(performances),
+        "Variabilité": max(performances) - min(performances)
+    })
 
-    best = df_mix.iloc[0]
+df_mix = pd.DataFrame(mix_results).sort_values(
+    by=["Production moyenne", "Production min"],
+    ascending=False
+)
 
-    st.success(f"🏆 Mix recommandé : {best['Config']} → {best['Production']} pièces")
+st.dataframe(df_mix)
+
+best = df_mix.iloc[0]
+
+st.success(
+    f"""
+    🏆 Mix recommandé annuel : {best['Configuration']}
+
+    ✔ Moyenne : {best['Production moyenne']}
+    ✔ Pire cas : {best['Production min']}
+    ✔ Variabilité : {best['Variabilité']}
+
+    👉 Idéal pour changement été / hiver
+    """
+)
