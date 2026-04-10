@@ -24,7 +24,7 @@ PAUSE_END = 13 * 60
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Mode réel")
+st.title("Simulateur P10 - Production")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 latence_max = st.slider("Latence max (min)", 0, 10, 10)
