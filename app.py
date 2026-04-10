@@ -11,7 +11,7 @@ BRAS_SEQUENCE = [4, 1, 2, 3]
 END_TIME = 21 * 60 + 45
 GAP_FOUR = 1
 
-st.title("🔥 Simulateur P10 - Version terrain correcte")
+st.title("🔥 Simulateur P10 - Version terrain validée")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 
@@ -44,7 +44,7 @@ def simulate():
         deco = data["deco"]
 
         # =====================
-        # 🔥 PREMIERE LIGNE (forcée)
+        # PREMIERE LIGNE
         # =====================
 
         if i == 0:
@@ -61,7 +61,7 @@ def simulate():
         else:
 
             # =====================
-            # 1. DECO pilote
+            # DECO pilote
             # =====================
 
             start_deco = last_deco_end
@@ -71,7 +71,7 @@ def simulate():
                 break
 
             # =====================
-            # 2. Remontée
+            # Remontée
             # =====================
 
             end_refroid = start_deco
@@ -80,7 +80,7 @@ def simulate():
             end_four = start_refroid
 
             # =====================
-            # 3. règle +2 min
+            # règle +2 min
             # =====================
 
             ecart = end_four - last_four_end
@@ -93,22 +93,24 @@ def simulate():
             start_four = end_four - four_time
 
             # =====================
-            # 4. contrainte +1 min
+            # CONTRAINTE FOUR (clé corrigée)
             # =====================
 
             min_start = last_four_end + GAP_FOUR
 
             if start_four < min_start:
-                shift = min_start - start_four
+                start_four = min_start
+                end_four = start_four + four_time
 
-                start_four += shift
-                end_four += shift
-                start_refroid += shift
-                end_refroid += shift
-                start_deco += shift
-                end_deco += shift
+                # ⚠️ on ajuste UNIQUEMENT le refroid
+                start_refroid = end_four
+                end_refroid = start_refroid + refroid
 
-        latence = start_deco - end_refroid
+                # ⚠️ mais on NE TOUCHE PAS AU DECO
+                latence = start_deco - end_refroid
+
+            else:
+                latence = start_deco - end_refroid
 
         results.append({
             "Bras": bras,
