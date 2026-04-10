@@ -14,14 +14,14 @@ BRAS_SEQUENCE = [4, 1, 2, 3]
 
 END_TIME = 21 * 60 + 45
 
-GAP_FOUR = 1  # 1 min minimum entre cycles
+GAP_FOUR = 1
 
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Version terrain final")
+st.title("🔥 Simulateur P10 - Version terrain finale")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 
@@ -62,7 +62,6 @@ def simulate():
         bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
-        # Temps four de base
         base_four_time = data["four"]
 
         # =====================
@@ -85,18 +84,18 @@ def simulate():
             start_four = max(target_start_four, min_start_four)
 
         # =====================
-        # 🔥 REGLE +2 MIN (clé)
+        # 🔥 REGLE +2 MIN
         # =====================
 
-        if i > 0:
+        if i == 0:
+            four_time = base_four_time + 2
+        else:
             ecart = start_four - last_four_end
 
             if ecart > 2:
                 four_time = base_four_time + 2
             else:
                 four_time = base_four_time
-        else:
-            four_time = base_four_time
 
         end_four = start_four + four_time
 
