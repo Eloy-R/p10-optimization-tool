@@ -230,7 +230,17 @@ with tab1:
 # =========================
 
 with tab2:
+    # =========================
+    # 📋 RAPPEL SIMULATION (AJOUT UNIQUEMENT)
+    # =========================
 
+    if "df" in st.session_state:
+
+        st.subheader("📋 Simulation actuelle")
+
+        st.dataframe(st.session_state["df"])
+
+        st.divider()
     st.title("Optimisation avancée production")
     st.markdown("### Maximiser production + utilisation four")
 
