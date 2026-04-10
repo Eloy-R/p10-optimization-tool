@@ -252,11 +252,112 @@ with tab1:
             mime="application/xml"
         )
 
+
+
 # =========================
-# ONGLET OPTIMISATION (INCHANGÉ)
+# ONGLET OPTIMISATION
 # =========================
 
 with tab2:
 
     st.title("Optimisation avancée production")
     st.markdown("### Maximiser production + utilisation four")
+
+    # 🔧 fonction centrale
+    def simulate_with_overtime(extra):
+        original_end = END_TIME
+        globals()["END_TIME"] = original_end + extra
+        df = simulate()
+        globals()["END_TIME"] = original_end
+        return df
+
+    if st.button("Lancer optimisation avancée"):
+
+        results = []
+        best_score = -999
+        best_config = None
+
+        pauses = [
+            ("Pas de pause", False, None),
+            ("11:30-12:00", True, (11*60+30, 12*60)),
+            ("12:00-12:30", True, (12*60, 12*60+30)),
+            ("12:30-13:00", True, (12*60+30, 13*60)),
+            ("12:00-13:00", True, (12*60, 13*60)),
+        ]
+
+        for pause_name, pause_active_val, pause_window in pauses:
+            for lat in range(0, 11):
+
+                pause_start_orig = PAUSE_START
+                pause_end_orig = PAUSE_END
+                latence_orig = latence_max
+
+                if pause_active_val:
+                    globals()["PAUSE_START"] = pause_window[0]
+                    globals()["PAUSE_END"] = pause_window[1]
+                else:
+                    globals()["PAUSE_START"] = 0
+                    globals()["PAUSE_END"] = 0
+
+                globals()["latence_max"] = lat
+
+                df = simulate()
+
+                globals()["PAUSE_START"] = pause_start_orig
+                globals()["PAUSE_END"] = pause_end_orig
+                globals()["latence_max"] = latence_orig
+
+                if df.empty:
+                    continue
+
+                total_prod = len(df)
+
+                total_four_time = sum(
+                    to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+                    for _, r in df.iterrows()
+                )
+
+                taux_four = (total_four_time / (END_TIME - START_TIME)) * 100
+                lat_moy = df["Latence (min)"].mean()
+
+                score = total_prod * 100 + taux_four - lat_moy * 2
+
+                results.append({
+                    "Pause": pause_name,
+                    "Latence max": lat,
+                    "Production": total_prod,
+                    "Taux four (%)": round(taux_four, 1),
+                    "Latence moy": round(lat_moy, 2),
+                    "Score": round(score, 1)
+                })
+
+                if score > best_score:
+                    best_score = score
+                    best_config = results[-1]
+
+        df_results = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+
+        st.subheader("📊 Scénarios")
+        st.dataframe(df_results)
+
+        st.subheader("🏆 Meilleur scénario")
+        st.success(
+            f"{best_config['Pause']} | Latence {best_config['Latence max']} min | "
+            f"{best_config['Production']} pièces | {best_config['Taux four (%)']}%"
+        )
+
+        # =========================
+        # 📊 PARETO
+        # =========================
+
+        st.subheader("📈 Pareto Production vs Four")
+
+        fig = px.scatter(
+            df_results,
+            x="Taux four (%)",
+            y="Production",
+            color="Pause",
+            hover_data=["Latence max"]
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
