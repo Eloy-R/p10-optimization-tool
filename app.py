@@ -312,11 +312,11 @@ with tab2:
         st.subheader("📊 Scénarios")
         st.dataframe(df_results)
 
-        st.subheader("🏆 Meilleur scénario")
+        st.subheader(" Meilleur scénario")
 
         st.success(
             f"""
-            🔥 {best_config['Pause']}
+             {best_config['Pause']}
             - Latence : {best_config['Latence max']} min
             - Production : {best_config['Production']}
             - Taux four : {best_config['Taux four (%)']}%
@@ -376,10 +376,10 @@ with tab2:
                 st.info(f"👉 +{extra} min permet +{gain} pièce(s)")
 
         # =========================
-        # 🧠 MIX ANNUEL OPTIMAL
+        # MIX ANNUEL OPTIMAL
         # =========================
 
-        st.subheader("🧠 Mix annuel optimal (robustesse)")
+        st.subheader(" Mix annuel optimal C: Cloison ; V: Cuve")
 
         configs = {
             "CCVV": ["cloison", "cloison", "cuve", "cuve"],
@@ -469,7 +469,7 @@ with tab2:
 
         st.success(
             f"""
-            🏆 Mix recommandé annuel : {best['Configuration']}
+            Mix recommandé annuel : {best['Configuration']}
             ✔ Moyenne : {best['Production moyenne']}
             ✔ Pire cas : {best['Production min']}
             ✔ Variabilité : {best['Variabilité']}
