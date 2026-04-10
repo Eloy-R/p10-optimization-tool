@@ -24,7 +24,7 @@ PAUSE_END = 13 * 60
 # TABS
 # =========================
 
-tab1, tab2 = st.tabs(["Simulation P10", "Optimisation"])
+tab1, tab2, tab3 = st.tabs(["Simulation P10", "Optimisation", "Analyse"])
 
 # =========================
 # SIMULATION (TON CODE INTACT)
@@ -390,16 +390,136 @@ with tab2:
 
                 st.info(f"👉 +{extra} min permet +{gain} pièce(s)")
 
-        # =========================
-        # 💡 INSIGHT GLOBAL (FIX)
-        # =========================
+with tab3:
 
-        st.subheader("💡 Insight global")
+    st.title("📊 Analyse industrielle P10")
 
-        top = df_results.head(3)
+    st.markdown("### 🔍 Analyse basée sur le dernier scénario simulé")
 
-        for i in range(len(top)):
-            st.write(
-                f"👉 {top.iloc[i]['Pause']} | latence {top.iloc[i]['Latence max']} min → "
-                f"{top.iloc[i]['Production']} pièces"
-            )
+    try:
+        df  # vérifie si df existe
+    except:
+        st.warning("👉 Lance d'abord une simulation dans l'onglet Simulation P10")
+        st.stop()
+
+    # =========================
+    # KPI DE BASE
+    # =========================
+
+    lat_moy = df["Latence (min)"].mean()
+    lat_max = df["Latence (min)"].max()
+
+    total_prod = len(df)
+
+    st.subheader("📊 Vue globale")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Production totale", total_prod)
+    col2.metric("Latence moyenne", round(lat_moy, 2))
+    col3.metric("Latence max", round(lat_max, 2))
+
+    # =========================
+    # GOULET D'ÉTRANGLEMENT
+    # =========================
+
+    st.subheader("🔥 Détection du goulet")
+
+    total_deco_time = sum(
+        to_minutes(r["Fin Déco"]) - to_minutes(r["Début Déco"])
+        for _, r in df.iterrows()
+    )
+
+    total_four_time = sum(
+        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+        for _, r in df.iterrows()
+    )
+
+    if total_deco_time > total_four_time:
+        st.error("👉 Goulet principal : DÉCOFFRAGE saturé")
+    else:
+        st.success("👉 Goulet principal : FOUR")
+
+    # =========================
+    # ANALYSE LATENCE
+    # =========================
+
+    st.subheader("⏳ Analyse de la latence")
+
+    df_lat = df[df["Latence (min)"] > 0]
+
+    if not df_lat.empty:
+        st.write(f"👉 {len(df_lat)} cycles avec latence")
+
+        st.dataframe(df_lat[["Bras", "Produit", "Latence (min)"]])
+
+        st.warning("👉 La latence se crée lorsque le déco n'est pas disponible")
+    else:
+        st.success("👉 Aucune latence détectée")
+
+    # =========================
+    # SATURATION DÉCO
+    # =========================
+
+    st.subheader("⚠️ Saturation du décoffrage")
+
+    deco_gaps = []
+
+    for i in range(1, len(df)):
+        prev_end = to_minutes(df.iloc[i-1]["Fin Déco"])
+        curr_start = to_minutes(df.iloc[i]["Début Déco"])
+
+        gap = curr_start - prev_end
+        deco_gaps.append(gap)
+
+    avg_gap = sum(deco_gaps) / len(deco_gaps)
+
+    if avg_gap < 5:
+        st.error("👉 Déco quasi saturé (peu de respiration)")
+    elif avg_gap < 15:
+        st.warning("👉 Déco chargé")
+    else:
+        st.success("👉 Déco fluide")
+
+    # =========================
+    # IMPACT PAUSE MIDI
+    # =========================
+
+    st.subheader("🕛 Impact pause midi")
+
+    midi_block = df[
+        df["Début Déco"].apply(lambda t: 12 <= int(t[:2]) < 13)
+    ]
+
+    if not midi_block.empty:
+        st.warning("👉 Des cycles sont impactés par la pause midi")
+    else:
+        st.success("👉 Aucun impact visible de la pause midi")
+
+    # =========================
+    # TEMPS MORTS
+    # =========================
+
+    st.subheader("🧊 Temps morts / pertes")
+
+    idle_times = []
+
+    for i in range(1, len(df)):
+        prev_end = to_minutes(df.iloc[i-1]["Fin Refroid"])
+        curr_start = to_minutes(df.iloc[i]["Début Déco"])
+
+        idle = curr_start - prev_end
+
+        if idle > 0:
+            idle_times.append(idle)
+
+    if idle_times:
+        avg_idle = sum(idle_times) / len(idle_times)
+        st.write(f"👉 Temps mort moyen : {round(avg_idle,1)} min")
+
+        if avg_idle > 10:
+            st.error("👉 Pertes importantes détectées")
+        else:
+            st.success("👉 Temps morts maîtrisés")
+    else:
+        st.success("👉 Aucun temps mort")
+
