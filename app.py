@@ -24,12 +24,11 @@ PAUSE_END = 13 * 60
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 avec pause midi")
+st.title("🔥 Simulateur P10 complet")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 mode = st.selectbox("Mode", ["Optimisé (0 latence)", "Réel"])
 latence_max = st.slider("Latence max (min)", 0, 10, 10)
-
 pause_active = st.checkbox("Activer pause midi (12h-13h)", True)
 
 if jour == "Lundi":
@@ -84,7 +83,6 @@ def simulate():
 
         # MODE
         if mode == "Optimisé (0 latence)":
-
             target_start_deco = last_deco_end
             target_end_refroid = target_start_deco
             target_end_four = target_end_refroid - refroid
@@ -108,20 +106,14 @@ def simulate():
 
         start_deco = max(end_refroid, last_deco_end)
 
-        # =====================
         # PAUSE MIDI
-        # =====================
-
         if pause_active:
             if PAUSE_START <= start_deco < PAUSE_END:
-                start_deco = PAUSE_END  # report à 13h
+                start_deco = PAUSE_END
 
         latence = start_deco - end_refroid
 
-        # =====================
         # CONTRAINTE LATENCE
-        # =====================
-
         if latence > latence_max:
             retard = latence - latence_max
 
@@ -215,10 +207,46 @@ if st.button("Lancer la simulation"):
 
     df = simulate()
 
-    st.subheader("📋 Résultat")
+    # =====================
+    # KPI
+    # =====================
+
+    nb_cuves = len(df[df["Produit"] == "cuve"])
+    nb_cloisons = len(df[df["Produit"] == "cloison"])
+
+    total_four_time = sum(
+        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+        for _, r in df.iterrows()
+    )
+
+    total_available_time = END_TIME - START_TIME
+    taux_four = (total_four_time / total_available_time) * 100
+
+    # =====================
+    # AFFICHAGE KPI
+    # =====================
+
+    st.subheader("📊 Production")
+
+    col1, col2 = st.columns(2)
+    col1.metric("Cuves", nb_cuves)
+    col2.metric("Cloisons", nb_cloisons)
+
+    st.subheader("🔥 Utilisation du four")
+    st.metric("Taux (%)", round(taux_four, 1))
+
+    # =====================
+    # TABLEAU
+    # =====================
+
+    st.subheader("📋 Détail")
     st.dataframe(df)
 
-    st.subheader("📊 Gantt")
+    # =====================
+    # GANTT
+    # =====================
+
+    st.subheader("📊 Diagramme de Gantt")
 
     gantt_df = build_gantt(df)
 
