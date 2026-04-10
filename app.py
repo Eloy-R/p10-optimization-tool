@@ -23,14 +23,14 @@ HORAIRES = {
 END_TIME = 21 * 60 + 45
 
 TRANSITION = 1
-ROTATION = 1  # 🔥 ajout clé
+GAP_FOUR = 1  # 🔥 1 min entre fin four et début suivant
 
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Version correcte")
+st.title("🔥 Simulateur P10 - Version cohérente")
 
 jour = st.selectbox("Jour de production", list(HORAIRES.keys()))
 START_TIME = HORAIRES[jour]
@@ -58,7 +58,6 @@ def simulate():
     results = []
 
     last_four_end = START_TIME
-    last_four_start = START_TIME - ROTATION  # 🔥 important
     last_deco_end = START_TIME
 
     i = 0
@@ -74,7 +73,7 @@ def simulate():
             four_time += 2
 
         # =====================
-        # CALCUL OPTIMAL (ton code intact)
+        # CALCUL OPTIMAL (inchangé)
         # =====================
 
         target_start_deco = last_deco_end
@@ -83,15 +82,14 @@ def simulate():
         target_start_four = target_end_four - four_time
 
         # =====================
-        # 🔥 CONTRAINTES (ajout propre)
+        # 🔥 CONTRAINTE FOUR (corrigée)
         # =====================
 
-        min_start_rotation = last_four_start + ROTATION
+        min_start_four = last_four_end + GAP_FOUR
 
         start_four = max(
-            last_four_end,
             target_start_four,
-            min_start_rotation  # 🔥 ajout clé
+            min_start_four
         )
 
         end_four = start_four + four_time
@@ -132,7 +130,6 @@ def simulate():
         })
 
         last_four_end = end_four
-        last_four_start = start_four  # 🔥 update clé
         last_deco_end = end_deco
 
         i += 1
