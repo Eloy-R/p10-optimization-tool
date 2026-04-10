@@ -24,10 +24,9 @@ PAUSE_END = 13 * 60
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 complet")
+st.title("🔥 Simulateur P10 - Mode réel")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
-mode = st.selectbox("Mode", ["Optimisé (0 latence)", "Réel"])
 latence_max = st.slider("Latence max (min)", 0, 10, 10)
 pause_active = st.checkbox("Activer pause midi (12h-13h)", True)
 
@@ -76,28 +75,17 @@ def simulate():
         refroid = data["refroid"]
         deco = data["deco"]
 
+        # +2 min sur les 4 premiers cycles
         if i < 4:
             four_time = base_four + 2
         else:
             four_time = base_four
 
-        # MODE
-        if mode == "Optimisé (0 latence)":
-            target_start_deco = last_deco_end
-            target_end_refroid = target_start_deco
-            target_end_four = target_end_refroid - refroid
-            target_start_four = target_end_four - four_time
-
-            if i == 0:
-                start_four = START_TIME
-            else:
-                start_four = max(target_start_four, last_four_end + GAP_FOUR)
-
+        # MODE REEL
+        if i == 0:
+            start_four = START_TIME
         else:
-            if i == 0:
-                start_four = START_TIME
-            else:
-                start_four = last_four_end + GAP_FOUR
+            start_four = last_four_end + GAP_FOUR
 
         # FLUX
         end_four = start_four + four_time
@@ -207,10 +195,7 @@ if st.button("Lancer la simulation"):
 
     df = simulate()
 
-    # =====================
     # KPI
-    # =====================
-
     nb_cuves = len(df[df["Produit"] == "cuve"])
     nb_cloisons = len(df[df["Produit"] == "cloison"])
 
@@ -222,10 +207,7 @@ if st.button("Lancer la simulation"):
     total_available_time = END_TIME - START_TIME
     taux_four = (total_four_time / total_available_time) * 100
 
-    # =====================
-    # AFFICHAGE KPI
-    # =====================
-
+    # KPI AFFICHAGE
     st.subheader("📊 Production")
 
     col1, col2 = st.columns(2)
@@ -235,17 +217,11 @@ if st.button("Lancer la simulation"):
     st.subheader("🔥 Utilisation du four")
     st.metric("Taux (%)", round(taux_four, 1))
 
-    # =====================
     # TABLEAU
-    # =====================
-
     st.subheader("📋 Détail")
     st.dataframe(df)
 
-    # =====================
     # GANTT
-    # =====================
-
     st.subheader("📊 Diagramme de Gantt")
 
     gantt_df = build_gantt(df)
