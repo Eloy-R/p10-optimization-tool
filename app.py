@@ -12,28 +12,24 @@ PRODUITS = {
 
 BRAS_SEQUENCE = [4, 1, 2, 3]
 
-HORAIRES = {
-    "Lundi": 6 * 60 + 25,
-    "Mardi": 4 * 60 + 52,
-    "Mercredi": 4 * 60 + 52,
-    "Jeudi": 4 * 60 + 52,
-    "Vendredi": 4 * 60 + 52,
-}
-
 END_TIME = 21 * 60 + 45
 
-TRANSITION = 1
-GAP_FOUR = 1
+GAP_FOUR = 1  # 1 min entre fin four et début suivant
 
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Version finale cohérente")
+st.title("🔥 Simulateur P10 - Version validée")
 
-jour = st.selectbox("Jour de production", list(HORAIRES.keys()))
-START_TIME = HORAIRES[jour]
+jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
+
+# 🔥 logique simplifiée
+if jour == "Lundi":
+    START_TIME = 6 * 60 + 25
+else:
+    START_TIME = 4 * 60 + 52
 
 
 # =========================
@@ -77,8 +73,8 @@ def simulate():
         # =====================
 
         target_start_deco = last_deco_end
-        target_end_refroid = target_start_deco - TRANSITION
-        target_end_four = target_end_refroid - data["refroid"] - TRANSITION
+        target_end_refroid = target_start_deco
+        target_end_four = target_end_refroid - data["refroid"]
         target_start_four = target_end_four - four_time
 
         # =====================
@@ -86,7 +82,6 @@ def simulate():
         # =====================
 
         if i == 0:
-            # 🔥 première ligne : pas de contrainte
             start_four = START_TIME
         else:
             min_start_four = last_four_end + GAP_FOUR
