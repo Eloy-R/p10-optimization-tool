@@ -22,12 +22,15 @@ HORAIRES = {
 
 END_TIME = 21 * 60 + 45
 
+# 🔥 NOUVEAU
+TRANSITION = 1  # minute entre zones
+
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Optimisation flux réel")
+st.title("🔥 Simulateur P10 - Flux réaliste avec transitions")
 
 jour = st.selectbox("Jour de production", list(HORAIRES.keys()))
 
@@ -71,36 +74,39 @@ def simulate():
             four_time += 2
 
         # =====================
-        # CALCUL OPTIMAL (clé)
+        # CALCUL OPTIMAL
         # =====================
-
-        # on veut : fin_refroid = dispo déco
-        # donc on remonte au four
 
         target_start_deco = last_deco_end
 
-        target_end_refroid = target_start_deco
+        # 🔥 intégrer transition AVANT déco
+        target_end_refroid = target_start_deco - TRANSITION
 
-        target_end_four = target_end_refroid - data["refroid"]
+        # 🔥 intégrer transition APRES four
+        target_end_four = target_end_refroid - data["refroid"] - TRANSITION
 
         target_start_four = target_end_four - four_time
 
-        # on ne peut pas démarrer avant le précédent
+        # Respect contrainte four
         start_four = max(last_four_end, target_start_four)
-
         end_four = start_four + four_time
 
         if end_four > END_TIME:
             break
 
-        # REFROID
-        end_refroid = end_four + data["refroid"]
+        # =====================
+        # REFROID (avec transition)
+        # =====================
+        start_refroid = end_four + TRANSITION
+        end_refroid = start_refroid + data["refroid"]
 
-        # DECO
-        start_deco = max(end_refroid, last_deco_end)
+        # =====================
+        # DECO (avec transition)
+        # =====================
+        start_deco = max(end_refroid + TRANSITION, last_deco_end)
         end_deco = start_deco + data["deco"]
 
-        latence = start_deco - end_refroid
+        latence = start_deco - (end_refroid + TRANSITION)
 
         if end_deco > END_TIME:
             break
@@ -113,6 +119,7 @@ def simulate():
             "Produit": produit,
             "Début Four": format_time(start_four),
             "Fin Four": format_time(end_four),
+            "Début Refroid": format_time(start_refroid),
             "Fin Refroid": format_time(end_refroid),
             "Début Déco": format_time(start_deco),
             "Fin Déco": format_time(end_deco),
@@ -166,6 +173,6 @@ if st.button("Lancer la simulation"):
     col4.metric("Latence moyenne", round(latence_moy, 2))
     col5.metric("Latence max", round(latence_max, 2))
 
-    st.subheader("📋 Détail")
+    st.subheader("📋 Détail complet")
 
     st.dataframe(df)
