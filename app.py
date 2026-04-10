@@ -17,15 +17,14 @@ BRAS_SEQUENCE = [4, 1, 2, 3]
 
 END_TIME = 21 * 60 + 45
 GAP_FOUR = 1
-
 PAUSE_START = 12 * 60
 PAUSE_END = 13 * 60
 
 # =========================
-# UI TABS
+# TABS
 # =========================
 
-tab1, tab2 = st.tabs(["Simulation", "Optimisation avancée"])
+tab1, tab2 = st.tabs(["Simulation", "Optimisation"])
 
 # =========================
 # OUTILS
@@ -43,7 +42,7 @@ def to_datetime(t):
     return datetime(2024, 1, 1, h, m)
 
 # =========================
-# SIMULATION (EXISTANT)
+# SIMULATION
 # =========================
 
 def simulate(start_time, latence_max, pause_active):
@@ -51,7 +50,6 @@ def simulate(start_time, latence_max, pause_active):
     results = []
     last_four_end = start_time
     last_deco_end = start_time
-
     i = 0
 
     while True:
@@ -60,17 +58,13 @@ def simulate(start_time, latence_max, pause_active):
         bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
-        base_four = data["four"]
-        refroid = data["refroid"]
-        deco = data["deco"]
-
-        four_time = base_four + 2 if i < 4 else base_four
+        four_time = data["four"] + 2 if i < 4 else data["four"]
 
         start_four = start_time if i == 0 else last_four_end + GAP_FOUR
-
         end_four = start_four + four_time
+
         start_refroid = end_four
-        end_refroid = start_refroid + refroid
+        end_refroid = start_refroid + data["refroid"]
 
         start_deco = max(end_refroid, last_deco_end)
 
@@ -87,12 +81,7 @@ def simulate(start_time, latence_max, pause_active):
             end_refroid += shift
             start_deco = max(end_refroid, last_deco_end)
 
-            if pause_active and PAUSE_START <= start_deco < PAUSE_END:
-                start_deco = PAUSE_END
-
-            latence = start_deco - end_refroid
-
-        end_deco = start_deco + deco
+        end_deco = start_deco + data["deco"]
 
         if end_deco > END_TIME:
             break
@@ -116,7 +105,40 @@ def simulate(start_time, latence_max, pause_active):
     return pd.DataFrame(results)
 
 # =========================
-# ONGLET 1 : SIMULATION
+# GANTT
+# =========================
+
+def build_gantt(df):
+
+    tasks = []
+
+    for _, row in df.iterrows():
+        label = f"B{row['Bras']} - {row['Produit']}"
+
+        for phase, start, end in [
+            ("Four", "Début Four", "Fin Four"),
+            ("Refroid", "Début Refroid", "Fin Refroid"),
+            ("Déco", "Début Déco", "Fin Déco")
+        ]:
+            tasks.append({
+                "Task": label,
+                "Start": to_datetime(row[start]),
+                "Finish": to_datetime(row[end]),
+                "Type": phase
+            })
+
+        if row["Latence (min)"] > 0:
+            tasks.append({
+                "Task": label,
+                "Start": to_datetime(row["Fin Refroid"]),
+                "Finish": to_datetime(row["Début Déco"]),
+                "Type": "LATENCE"
+            })
+
+    return pd.DataFrame(tasks)
+
+# =========================
+# TAB 1 : SIMULATION
 # =========================
 
 with tab1:
@@ -133,72 +155,92 @@ with tab1:
 
         df = simulate(START_TIME, latence_max, pause_active)
 
+        # KPI
+        nb_cuves = len(df[df["Produit"] == "cuve"])
+        nb_cloisons = len(df[df["Produit"] == "cloison"])
+
+        total_four_time = sum(
+            to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+            for _, r in df.iterrows()
+        )
+
+        taux_four = (total_four_time / (END_TIME - START_TIME)) * 100
+
+        st.metric("Cuves", nb_cuves)
+        st.metric("Cloisons", nb_cloisons)
+        st.metric("Utilisation four (%)", round(taux_four, 1))
+
         st.dataframe(df)
 
+        gantt_df = build_gantt(df)
+
+        fig = px.timeline(
+            gantt_df,
+            x_start="Start",
+            x_end="Finish",
+            y="Task",
+            color="Type",
+            color_discrete_map={
+                "Four": "green",
+                "Refroid": "blue",
+                "Déco": "purple",
+                "LATENCE": "red"
+            }
+        )
+
+        fig.update_yaxes(autorange="reversed")
+        fig.update_layout(xaxis=dict(tickformat="%H:%M"))
+
+        st.plotly_chart(fig, use_container_width=True)
+
 # =========================
-# ONGLET 2 : OR-TOOLS
+# TAB 2 : OPTIMISATION SIMPLE (FIABLE)
 # =========================
 
 with tab2:
 
-    st.title("🧠 Optimisation OR-Tools PRO")
+    st.title("🚀 Optimisation automatique fiable")
 
     if st.button("Optimiser"):
 
-        model = cp_model.CpModel()
+        best_df = None
+        best_score = -999
 
-        max_cycles = 25
-        horizon = 1000
+        results = []
 
-        starts = []
-        ends = []
+        for offset in range(0, 30):
 
-        for i in range(max_cycles):
-            s = model.NewIntVar(0, horizon, f"s_{i}")
-            d = 40  # approx
-            e = model.NewIntVar(0, horizon, f"e_{i}")
+            df = simulate(START_TIME + offset, 10, True)
 
-            model.Add(e == s + d)
+            if df.empty:
+                continue
 
-            starts.append(s)
-            ends.append(e)
+            nb = len(df)
 
-        # ordre
-        for i in range(1, max_cycles):
-            model.Add(starts[i] >= ends[i-1] + 1)
+            total_four_time = sum(
+                to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+                for _, r in df.iterrows()
+            )
 
-        # pause midi
-        for i in range(max_cycles):
-            before = model.NewBoolVar(f"before_{i}")
-            after = model.NewBoolVar(f"after_{i}")
+            taux = (total_four_time / (END_TIME - START_TIME)) * 100
+            lat = df["Latence (min)"].mean()
 
-            model.Add(starts[i] <= PAUSE_START).OnlyEnforceIf(before)
-            model.Add(starts[i] >= PAUSE_END).OnlyEnforceIf(after)
+            score = nb * 100 + taux - lat
 
-            model.AddBoolOr([before, after])
+            results.append({
+                "Offset": offset,
+                "Production": nb,
+                "Taux four": round(taux, 1),
+                "Latence moy": round(lat, 2),
+                "Score": round(score, 2)
+            })
 
-        # objectif
-        model.Maximize(max_cycles)
+            if score > best_score:
+                best_score = score
+                best_df = df
 
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 5
+        st.subheader("Comparaison")
+        st.dataframe(pd.DataFrame(results))
 
-        status = solver.Solve(model)
-
-        if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-
-            rows = []
-            for i in range(max_cycles):
-                rows.append({
-                    "Cycle": i,
-                    "Start": solver.Value(starts[i]),
-                    "End": solver.Value(ends[i])
-                })
-
-            df_opt = pd.DataFrame(rows)
-
-            st.subheader("📊 Résultat optimisation")
-            st.dataframe(df_opt)
-
-        else:
-            st.error("Pas de solution")
+        st.subheader("Meilleur scénario")
+        st.dataframe(best_df)
