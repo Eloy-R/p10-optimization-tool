@@ -27,7 +27,7 @@ PAUSE_END = 13 * 60
 tab1, tab2 = st.tabs(["Simulation P10", "Optimisation"])
 
 # =========================
-# SIMULATION (TON CODE INTACT)
+# SIMULATION
 # =========================
 
 with tab1:
@@ -225,40 +225,38 @@ with tab1:
 
         st.plotly_chart(fig, use_container_width=True)
 
-        # =========================
-        # 📤 EXPORT EXCEL XML (AJOUT)
-        # =========================
-
+        # 🔥 AJOUT UNIQUE : EXPORT EXCEL
         def df_to_excel_xml(df):
             xml = '<?xml version="1.0"?>\n'
-            xml += '<?mso-application progid="Excel.Sheet"?>\n'
-            xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n'
-            xml += ' xmlns:o="urn:schemas-microsoft-com:office:office"\n'
-            xml += ' xmlns:x="urn:schemas-microsoft-com:office:excel"\n'
-            xml += ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n'
+            xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet">'
+            xml += '<Worksheet ss:Name="Simulation"><Table>'
 
-            xml += '<Worksheet ss:Name="Simulation">\n<Table>\n'
-
-            xml += '<Row>\n'
+            xml += '<Row>'
             for col in df.columns:
-                xml += f'<Cell><Data ss:Type="String">{col}</Data></Cell>\n'
-            xml += '</Row>\n'
+                xml += f'<Cell><Data ss:Type="String">{col}</Data></Cell>'
+            xml += '</Row>'
 
             for _, row in df.iterrows():
-                xml += '<Row>\n'
+                xml += '<Row>'
                 for val in row:
-                    xml += f'<Cell><Data ss:Type="String">{val}</Data></Cell>\n'
-                xml += '</Row>\n'
+                    xml += f'<Cell><Data ss:Type="String">{val}</Data></Cell>'
+                xml += '</Row>'
 
-            xml += '</Table>\n</Worksheet>\n</Workbook>'
-
+            xml += '</Table></Worksheet></Workbook>'
             return xml
 
-        xml_data = df_to_excel_xml(df)
-
         st.download_button(
-            label="📥 Télécharger Excel (XML)",
-            data=xml_data,
-            file_name="simulation_p10.xml",
+            "📥 Télécharger Excel",
+            df_to_excel_xml(df),
+            file_name="simulation.xml",
             mime="application/xml"
         )
+
+# =========================
+# ONGLET OPTIMISATION (INCHANGÉ)
+# =========================
+
+with tab2:
+
+    st.title("Optimisation avancée production")
+    st.markdown("### Maximiser production + utilisation four")
