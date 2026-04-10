@@ -475,34 +475,7 @@ with tab2:
             ✔ Variabilité : {best['Variabilité']}
             """
         )
-            # =========================
-        # 🎯 SEUIL CRITIQUE PRODUCTION
-        # =========================
 
-        st.subheader("🎯 Seuil pour produire une pièce en plus")
-
-        base_df = simulate()
-        base_prod = len(base_df)
-
-        seuil = None
-
-        for extra in range(1, 121):  # test jusqu'à +2h
-
-            original_end = END_TIME
-            globals()["END_TIME"] = original_end + extra
-
-            df_test = simulate()
-
-            globals()["END_TIME"] = original_end
-
-            if len(df_test) > base_prod:
-                seuil = extra
-                break
-
-        if seuil:
-            st.success(f"👉 +{seuil} min permet de produire +1 pièce")
-        else:
-            st.warning("👉 Même avec +2h, pas de pièce supplémentaire")
 
         # =========================
         # ⏱️ DERNIÈRE PIÈCE POSSIBLE
