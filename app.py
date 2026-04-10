@@ -256,12 +256,10 @@ with tab2:
 
             for lat in latences:
 
-                # 🔥 backup
                 pause_start_orig = PAUSE_START
                 pause_end_orig = PAUSE_END
                 latence_orig = latence_max
 
-                # 🔥 inject pause dynamique
                 if pause_active_val:
                     globals()["PAUSE_START"] = pause_window[0]
                     globals()["PAUSE_END"] = pause_window[1]
@@ -273,7 +271,6 @@ with tab2:
 
                 df = simulate()
 
-                # 🔥 restore
                 globals()["PAUSE_START"] = pause_start_orig
                 globals()["PAUSE_END"] = pause_end_orig
                 globals()["latence_max"] = latence_orig
@@ -312,16 +309,8 @@ with tab2:
 
         df_results = pd.DataFrame(results).sort_values(by="Score", ascending=False)
 
-        # =========================
-        # TABLEAU
-        # =========================
-
         st.subheader("📊 Scénarios")
         st.dataframe(df_results)
-
-        # =========================
-        # MEILLEUR
-        # =========================
 
         st.subheader("🏆 Meilleur scénario")
 
@@ -345,14 +334,13 @@ with tab2:
             x="Taux four (%)",
             y="Production",
             color="Pause",
-            hover_data=["Latence max"],
-            title="Optimisation production"
+            hover_data=["Latence max"]
         )
 
         st.plotly_chart(fig, use_container_width=True)
 
         # =========================
-        # ⏱️ OVERTIME INTELLIGENT
+        # ⏱️ OVERTIME
         # =========================
 
         st.subheader("⏱️ Overtime intelligent")
@@ -361,7 +349,6 @@ with tab2:
 
         for extra in [0, 15, 30, 45, 60]:
 
-            # hack simple : prolonger END_TIME temporairement
             original_end = END_TIME
             globals()["END_TIME"] = original_end + extra
 
@@ -372,18 +359,15 @@ with tab2:
             if df.empty:
                 continue
 
-            total = len(df)
-
             overtime_results.append({
                 "Overtime (min)": extra,
-                "Production": total
+                "Production": len(df)
             })
 
         df_ot = pd.DataFrame(overtime_results)
 
         st.dataframe(df_ot)
 
-        # 💡 insight overtime
         for i in range(1, len(df_ot)):
             if df_ot.iloc[i]["Production"] > df_ot.iloc[i-1]["Production"]:
                 gain = df_ot.iloc[i]["Production"] - df_ot.iloc[i-1]["Production"]
@@ -391,111 +375,103 @@ with tab2:
 
                 st.info(f"👉 +{extra} min permet +{gain} pièce(s)")
 
-# =========================
-# 🧠 MIX ANNUEL OPTIMAL
-# =========================
+        # =========================
+        # 🧠 MIX ANNUEL OPTIMAL
+        # =========================
 
-st.subheader("🧠 Mix annuel optimal (robustesse)")
+        st.subheader("🧠 Mix annuel optimal (robustesse)")
 
-configs = {
-    "CCVV": ["cloison", "cloison", "cuve", "cuve"],
-    "CVVC": ["cuve", "cloison", "cloison", "cuve"],
-    "CVCV": ["cuve", "cloison", "cuve", "cloison"],
-    "VVCC": ["cuve", "cuve", "cloison", "cloison"],
-    "Alt": ["cloison", "cuve", "cloison", "cuve"],
-}
+        configs = {
+            "CCVV": ["cloison", "cloison", "cuve", "cuve"],
+            "CVVC": ["cuve", "cloison", "cloison", "cuve"],
+            "CVCV": ["cuve", "cloison", "cuve", "cloison"],
+            "VVCC": ["cuve", "cuve", "cloison", "cloison"],
+            "Alt": ["cloison", "cuve", "cloison", "cuve"],
+        }
 
-# scénarios testés = conditions réelles
-latences = range(0, 11)
+        mix_results = []
 
-mix_results = []
+        for name, pattern in configs.items():
 
-for name, pattern in configs.items():
+            performances = []
 
-    performances = []
+            for lat in range(0, 11):
 
-    for lat in latences:
+                lat_orig = latence_max
+                globals()["latence_max"] = lat
 
-        # backup
-        lat_orig = latence_max
-        globals()["latence_max"] = lat
+                results_alt = []
+                last_four_end = START_TIME
+                last_deco_end = START_TIME
+                i = 0
 
-        # simulation alternative
-        results_alt = []
-        last_four_end = START_TIME
-        last_deco_end = START_TIME
-        i = 0
+                while True:
 
-        while True:
+                    produit = pattern[i % 4]
+                    data = PRODUITS[produit]
 
-            produit = pattern[i % 4]
-            data = PRODUITS[produit]
+                    four_time = data["four"] + 2 if i < 4 else data["four"]
 
-            four_time = data["four"] + 2 if i < 4 else data["four"]
+                    start_four = START_TIME if i == 0 else last_four_end + GAP_FOUR
 
-            start_four = START_TIME if i == 0 else last_four_end + GAP_FOUR
+                    end_four = start_four + four_time
+                    start_refroid = end_four
+                    end_refroid = start_refroid + data["refroid"]
 
-            end_four = start_four + four_time
-            start_refroid = end_four
-            end_refroid = start_refroid + data["refroid"]
+                    start_deco = max(end_refroid, last_deco_end)
 
-            start_deco = max(end_refroid, last_deco_end)
+                    if PAUSE_START <= start_deco < PAUSE_END:
+                        start_deco = PAUSE_END
 
-            if PAUSE_START <= start_deco < PAUSE_END:
-                start_deco = PAUSE_END
+                    latence = start_deco - end_refroid
 
-            latence = start_deco - end_refroid
+                    if latence > lat:
+                        shift = latence - lat
 
-            if latence > lat:
-                shift = latence - lat
+                        start_four += shift
+                        end_four += shift
+                        start_refroid += shift
+                        end_refroid += shift
 
-                start_four += shift
-                end_four += shift
-                start_refroid += shift
-                end_refroid += shift
+                        start_deco = max(end_refroid, last_deco_end)
 
-                start_deco = max(end_refroid, last_deco_end)
+                    end_deco = start_deco + data["deco"]
 
-            end_deco = start_deco + data["deco"]
+                    if end_deco > END_TIME:
+                        break
 
-            if end_deco > END_TIME:
-                break
+                    results_alt.append(1)
 
-            results_alt.append(1)
+                    last_four_end = end_four
+                    last_deco_end = end_deco
+                    i += 1
 
-            last_four_end = end_four
-            last_deco_end = end_deco
-            i += 1
+                globals()["latence_max"] = lat_orig
 
-        globals()["latence_max"] = lat_orig
+                performances.append(len(results_alt))
 
-        performances.append(len(results_alt))
+            mix_results.append({
+                "Configuration": name,
+                "Production moyenne": round(sum(performances)/len(performances), 1),
+                "Production min": min(performances),
+                "Production max": max(performances),
+                "Variabilité": max(performances) - min(performances)
+            })
 
-    mix_results.append({
-        "Configuration": name,
-        "Production moyenne": round(sum(performances)/len(performances), 1),
-        "Production min": min(performances),
-        "Production max": max(performances),
-        "Variabilité": max(performances) - min(performances)
-    })
+        df_mix = pd.DataFrame(mix_results).sort_values(
+            by=["Production moyenne", "Production min"],
+            ascending=False
+        )
 
-df_mix = pd.DataFrame(mix_results).sort_values(
-    by=["Production moyenne", "Production min"],
-    ascending=False
-)
+        st.dataframe(df_mix)
 
-st.dataframe(df_mix)
+        best = df_mix.iloc[0]
 
-best = df_mix.iloc[0]
-
-st.success(
-    f"""
-    🏆 Mix recommandé annuel : {best['Configuration']}
-
-    ✔ Moyenne : {best['Production moyenne']}
-    ✔ Pire cas : {best['Production min']}
-    ✔ Variabilité : {best['Variabilité']}
-
-    👉 Idéal pour changement été / hiver
-    """
-)
+        st.success(
+            f"""
+            🏆 Mix recommandé annuel : {best['Configuration']}
+            ✔ Moyenne : {best['Production moyenne']}
+            ✔ Pire cas : {best['Production min']}
+            ✔ Variabilité : {best['Variabilité']}
+            """
+        )
