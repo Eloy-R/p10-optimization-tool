@@ -19,10 +19,9 @@ GAP_FOUR = 1
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Version optimisée")
+st.title("🔥 Simulateur P10 - Pilotage production")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
-
 latence_max = st.slider("Latence max (min)", 0, 10, 10)
 
 if jour == "Lundi":
@@ -33,6 +32,10 @@ else:
 
 def format_time(m):
     return f"{int(m//60):02d}:{int(m%60):02d}"
+
+
+def to_minutes(t):
+    return int(t[:2]) * 60 + int(t[3:])
 
 
 # =========================
@@ -58,7 +61,7 @@ def simulate():
         refroid = data["refroid"]
         deco = data["deco"]
 
-        # +2 min sur 4 premiers cycles
+        # +2 min sur les 4 premiers cycles
         if i < 4:
             four_time = base_four + 2
         else:
@@ -93,13 +96,12 @@ def simulate():
         start_deco = max(end_refroid, last_deco_end)
 
         # =====================
-        # 🔥 CONTRAINTE LATENCE MAX
+        # CONTRAINTE LATENCE
         # =====================
 
         latence = start_deco - end_refroid
 
         if latence > latence_max:
-            # on retarde le four
             retard = latence - latence_max
 
             start_four += retard
@@ -107,7 +109,6 @@ def simulate():
             start_refroid += retard
             end_refroid += retard
 
-            # recalcul déco
             start_deco = max(end_refroid, last_deco_end)
             latence = start_deco - end_refroid
 
@@ -115,10 +116,6 @@ def simulate():
 
         if end_deco > END_TIME:
             break
-
-        # =====================
-        # SAVE
-        # =====================
 
         results.append({
             "Bras": bras,
@@ -148,5 +145,35 @@ if st.button("Lancer la simulation"):
 
     df = simulate()
 
-    st.subheader("📋 Résultat")
+    # =====================
+    # KPI
+    # =====================
+
+    nb_cuves = len(df[df["Produit"] == "cuve"])
+    nb_cloisons = len(df[df["Produit"] == "cloison"])
+
+    total_four_time = sum(
+        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+        for _, r in df.iterrows()
+    )
+
+    total_available_time = END_TIME - START_TIME
+    taux_four = (total_four_time / total_available_time) * 100
+
+    # =====================
+    # AFFICHAGE
+    # =====================
+
+    st.subheader("📊 Production")
+
+    col1, col2 = st.columns(2)
+    col1.metric("Cuves produites", nb_cuves)
+    col2.metric("Cloisons produites", nb_cloisons)
+
+    st.subheader("🔥 Performance four")
+
+    st.metric("Utilisation du four (%)", round(taux_four, 1))
+
+    st.subheader("📋 Détail")
+
     st.dataframe(df)
