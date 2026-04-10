@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # =========================
-# PARAMETRES
+# PARAMETRES PRODUITS
 # =========================
 
 PRODUITS = {
@@ -12,7 +12,15 @@ PRODUITS = {
 
 BRAS_SEQUENCE = [4, 1, 2, 3]
 
-START_TIME = 4 * 60 + 52
+# Horaires par jour
+HORAIRES = {
+    "Lundi": 6 * 60 + 25,
+    "Mardi": 4 * 60 + 52,
+    "Mercredi": 4 * 60 + 52,
+    "Jeudi": 4 * 60 + 52,
+    "Vendredi": 4 * 60 + 52,
+}
+
 END_TIME = 21 * 60 + 45
 
 
@@ -20,11 +28,15 @@ END_TIME = 21 * 60 + 45
 # UI
 # =========================
 
-st.title("Simulateur P10 - Performance Ligne 🔥")
+st.title("Simulateur P10 - Ligne complète 🔥")
+
+jour = st.selectbox("Jour de production", list(HORAIRES.keys()))
 
 pause_enabled = st.checkbox("Activer pause midi", True)
 pause_duration = st.selectbox("Durée pause (min)", [30, 60])
 pause_mode = st.selectbox("Mode pause", ["deco_only", "full_stop"])
+
+START_TIME = HORAIRES[jour]
 
 
 # =========================
@@ -80,15 +92,18 @@ def simulate():
 
         end_four = start_four + four_time
 
-        # STOP si dépasse la journée
         if end_four > END_TIME:
             break
 
-        # REFROID
-        end_refroid = end_four + data["refroid"]
+        # REFROIDISSEMENT
+        start_refroid = end_four
+        end_refroid = start_refroid + data["refroid"]
+
+        # ZONE AVANT DECO (latence)
+        start_attente = end_refroid
 
         # DECO
-        start_deco = max(end_refroid, last_deco_end)
+        start_deco = max(start_attente, last_deco_end)
         start_deco = apply_pause(start_deco, pause_start)
 
         end_deco = start_deco + data["deco"]
@@ -96,11 +111,16 @@ def simulate():
         latence = start_deco - end_refroid
 
         results.append({
+            "Bras": bras,
             "Produit": produit,
-            "start_four": start_four,
-            "end_four": end_four,
-            "latence": latence,
-            "end_deco": end_deco
+            "Début Four": format_time(start_four),
+            "Fin Four": format_time(end_four),
+            "Début Refroid": format_time(start_refroid),
+            "Fin Refroid": format_time(end_refroid),
+            "Début Attente": format_time(start_attente),
+            "Début Déco": format_time(start_deco),
+            "Fin Déco": format_time(end_deco),
+            "Latence (min)": latence
         })
 
         last_four_end = end_four
@@ -119,48 +139,43 @@ if st.button("Lancer la simulation"):
 
     df = simulate()
 
-    # =========================
     # KPI
-    # =========================
-
     nb_cuves = len(df[df["Produit"] == "cuve"])
     nb_cloisons = len(df[df["Produit"] == "cloison"])
 
-    total_four_time = df["end_four"] - df["start_four"]
-    total_four_time = total_four_time.sum()
+    total_four_time = df.apply(
+        lambda row: (
+            int(row["Fin Four"][:2]) * 60 + int(row["Fin Four"][3:])
+            - (int(row["Début Four"][:2]) * 60 + int(row["Début Four"][3:]))
+        ),
+        axis=1
+    ).sum()
 
     total_available_time = END_TIME - START_TIME
-
     taux_four = (total_four_time / total_available_time) * 100
 
-    latence_moy = df["latence"].mean()
-    latence_max = df["latence"].max()
+    latence_moy = df["Latence (min)"].mean()
+    latence_max = df["Latence (min)"].max()
 
     # =========================
     # AFFICHAGE
     # =========================
 
-    st.subheader("📊 Résultats")
+    st.subheader("📊 KPI")
 
     col1, col2, col3 = st.columns(3)
 
-    col1.metric("Cuves produites", nb_cuves)
-    col2.metric("Cloisons produites", nb_cloisons)
+    col1.metric("Cuves", nb_cuves)
+    col2.metric("Cloisons", nb_cloisons)
     col3.metric("Utilisation four (%)", round(taux_four, 1))
 
-    st.subheader("📈 Qualité flux")
+    st.subheader("📈 Flux")
 
     col4, col5 = st.columns(2)
 
-    col4.metric("Latence moyenne (min)", round(latence_moy, 1))
-    col5.metric("Latence max (min)", latence_max)
+    col4.metric("Latence moyenne", round(latence_moy, 1))
+    col5.metric("Latence max", latence_max)
 
-    st.subheader("📋 Détail (debug)")
+    st.subheader("📋 Simulation détaillée")
 
-    df_display = df.copy()
-    df_display["Début Four"] = df_display["start_four"].apply(format_time)
-    df_display["Fin Four"] = df_display["end_four"].apply(format_time)
-
-    st.dataframe(df_display[[
-        "Produit", "Début Four", "Fin Four", "latence"
-    ]])
+    st.dataframe(df)
