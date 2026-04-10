@@ -22,24 +22,14 @@ HORAIRES = {
 
 END_TIME = 21 * 60 + 45
 
-LATENCE_CIBLE = 1
-LATENCE_MAX = 10
-
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Avec équilibrage des bras")
+st.title("🔥 Simulateur P10 - Optimisation flux réel")
 
-jour = st.selectbox("Jour", list(HORAIRES.keys()))
-
-pause_enabled = st.checkbox("Pause midi", True)
-pause_duration = st.selectbox("Durée pause (min)", [30, 60])
-pause_mode = st.selectbox("Mode pause", ["deco_only", "full_stop"])
-
-# 🔥 nouveau paramètre clé
-DECALAGE_BRAS = st.slider("Décalage entre bras (min)", 0, 30, 8)
+jour = st.selectbox("Jour de production", list(HORAIRES.keys()))
 
 START_TIME = HORAIRES[jour]
 
@@ -58,18 +48,6 @@ def to_minutes(t):
     return int(t[:2]) * 60 + int(t[3:])
 
 
-def apply_pause(time, pause_start):
-    if not pause_enabled:
-        return time
-
-    pause_end = pause_start + pause_duration
-
-    if pause_start <= time < pause_end:
-        return pause_end
-
-    return time
-
-
 # =========================
 # SIMULATION
 # =========================
@@ -77,36 +55,49 @@ def apply_pause(time, pause_start):
 def simulate():
     results = []
 
-    pause_start = 12 * 60
-
+    last_four_end = START_TIME
     last_deco_end = START_TIME
 
     i = 0
 
     while True:
         produit = "cloison" if i % 2 == 0 else "cuve"
-        bras_index = i % 4
-        bras = BRAS_SEQUENCE[bras_index]
+        bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
-        # 🔥 décalage initial des bras
-        start_four = START_TIME + bras_index * DECALAGE_BRAS + (i // 4) * 5
-
+        # Temps four
         four_time = data["four"]
         if i < 4:
             four_time += 2
+
+        # =====================
+        # CALCUL OPTIMAL (clé)
+        # =====================
+
+        # on veut : fin_refroid = dispo déco
+        # donc on remonte au four
+
+        target_start_deco = last_deco_end
+
+        target_end_refroid = target_start_deco
+
+        target_end_four = target_end_refroid - data["refroid"]
+
+        target_start_four = target_end_four - four_time
+
+        # on ne peut pas démarrer avant le précédent
+        start_four = max(last_four_end, target_start_four)
 
         end_four = start_four + four_time
 
         if end_four > END_TIME:
             break
 
+        # REFROID
         end_refroid = end_four + data["refroid"]
 
         # DECO
         start_deco = max(end_refroid, last_deco_end)
-        start_deco = apply_pause(start_deco, pause_start)
-
         end_deco = start_deco + data["deco"]
 
         latence = start_deco - end_refroid
@@ -114,6 +105,9 @@ def simulate():
         if end_deco > END_TIME:
             break
 
+        # =====================
+        # SAVE
+        # =====================
         results.append({
             "Bras": bras,
             "Produit": produit,
@@ -125,7 +119,9 @@ def simulate():
             "Latence (min)": round(latence, 2)
         })
 
+        last_four_end = end_four
         last_deco_end = end_deco
+
         i += 1
 
     return pd.DataFrame(results)
@@ -142,20 +138,33 @@ if st.button("Lancer la simulation"):
     nb_cuves = len(df[df["Produit"] == "cuve"])
     nb_cloisons = len(df[df["Produit"] == "cloison"])
 
+    total_four_time = sum(
+        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+        for _, r in df.iterrows()
+    )
+
+    total_available_time = END_TIME - START_TIME
+    taux_four = (total_four_time / total_available_time) * 100
+
     latence_moy = df["Latence (min)"].mean()
     latence_max = df["Latence (min)"].max()
 
-    st.subheader("📊 Production")
+    # =========================
+    # AFFICHAGE
+    # =========================
 
-    col1, col2 = st.columns(2)
+    st.subheader("📊 Performance")
+
+    col1, col2, col3 = st.columns(3)
     col1.metric("Cuves", nb_cuves)
     col2.metric("Cloisons", nb_cloisons)
+    col3.metric("Utilisation four (%)", round(taux_four, 1))
 
-    st.subheader("📈 Qualité")
+    st.subheader("📈 Qualité flux")
 
-    col3, col4 = st.columns(2)
-    col3.metric("Latence moyenne", round(latence_moy, 2))
-    col4.metric("Latence max", round(latence_max, 2))
+    col4, col5 = st.columns(2)
+    col4.metric("Latence moyenne", round(latence_moy, 2))
+    col5.metric("Latence max", round(latence_max, 2))
 
     st.subheader("📋 Détail")
 
