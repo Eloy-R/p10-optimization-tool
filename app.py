@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
-from ortools.sat.python import cp_model
 
 # =========================
 # PARAMETRES
@@ -17,6 +16,7 @@ BRAS_SEQUENCE = [4, 1, 2, 3]
 
 END_TIME = 21 * 60 + 45
 GAP_FOUR = 1
+
 PAUSE_START = 12 * 60
 PAUSE_END = 13 * 60
 
@@ -42,14 +42,16 @@ def to_datetime(t):
     return datetime(2024, 1, 1, h, m)
 
 # =========================
-# SIMULATION
+# SIMULATION (TON MOTEUR)
 # =========================
 
 def simulate(start_time, latence_max, pause_active):
 
     results = []
+
     last_four_end = start_time
     last_deco_end = start_time
+
     i = 0
 
     while True:
@@ -58,30 +60,41 @@ def simulate(start_time, latence_max, pause_active):
         bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
-        four_time = data["four"] + 2 if i < 4 else data["four"]
+        base_four = data["four"]
+        refroid = data["refroid"]
+        deco = data["deco"]
 
-        start_four = start_time if i == 0 else last_four_end + GAP_FOUR
+        # +2 min sur 4 premiers cycles
+        if i < 4:
+            four_time = base_four + 2
+        else:
+            four_time = base_four
+
+        # MODE REEL (inchangé)
+        if i == 0:
+            start_four = start_time
+        else:
+            start_four = last_four_end + GAP_FOUR
+
+        # FLUX
         end_four = start_four + four_time
-
         start_refroid = end_four
-        end_refroid = start_refroid + data["refroid"]
+        end_refroid = start_refroid + refroid
 
         start_deco = max(end_refroid, last_deco_end)
 
+        # PAUSE MIDI
         if pause_active and PAUSE_START <= start_deco < PAUSE_END:
             start_deco = PAUSE_END
 
         latence = start_deco - end_refroid
 
+        # 🔥 SECURITE LATENCE (ajout uniquement)
         if latence > latence_max:
-            shift = latence - latence_max
-            start_four += shift
-            end_four += shift
-            start_refroid += shift
-            end_refroid += shift
-            start_deco = max(end_refroid, last_deco_end)
+            start_deco = end_refroid + latence_max
+            latence = latence_max
 
-        end_deco = start_deco + data["deco"]
+        end_deco = start_deco + deco
 
         if end_deco > END_TIME:
             break
@@ -95,11 +108,12 @@ def simulate(start_time, latence_max, pause_active):
             "Fin Refroid": format_time(end_refroid),
             "Début Déco": format_time(start_deco),
             "Fin Déco": format_time(end_deco),
-            "Latence (min)": latence
+            "Latence (min)": round(latence, 2)
         })
 
         last_four_end = end_four
         last_deco_end = end_deco
+
         i += 1
 
     return pd.DataFrame(results)
@@ -113,6 +127,7 @@ def build_gantt(df):
     tasks = []
 
     for _, row in df.iterrows():
+
         label = f"B{row['Bras']} - {row['Produit']}"
 
         for phase, start, end in [
@@ -166,12 +181,18 @@ with tab1:
 
         taux_four = (total_four_time / (END_TIME - START_TIME)) * 100
 
-        st.metric("Cuves", nb_cuves)
-        st.metric("Cloisons", nb_cloisons)
-        st.metric("Utilisation four (%)", round(taux_four, 1))
+        st.subheader("📊 Production")
+        col1, col2 = st.columns(2)
+        col1.metric("Cuves", nb_cuves)
+        col2.metric("Cloisons", nb_cloisons)
 
+        st.subheader("🔥 Utilisation du four")
+        st.metric("Taux (%)", round(taux_four, 1))
+
+        st.subheader("📋 Détail")
         st.dataframe(df)
 
+        st.subheader("📊 Gantt")
         gantt_df = build_gantt(df)
 
         fig = px.timeline(
@@ -194,19 +215,18 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
 # =========================
-# TAB 2 : OPTIMISATION SIMPLE (FIABLE)
+# TAB 2 : OPTIMISATION (BONUS)
 # =========================
 
 with tab2:
 
-    st.title("🚀 Optimisation automatique fiable")
+    st.title("🚀 Optimisation (bonus)")
 
-    if st.button("Optimiser"):
-
-        best_df = None
-        best_score = -999
+    if st.button("Lancer optimisation"):
 
         results = []
+        best_df = None
+        best_score = -999
 
         for offset in range(0, 30):
 
@@ -228,9 +248,9 @@ with tab2:
             score = nb * 100 + taux - lat
 
             results.append({
-                "Offset": offset,
+                "Offset (min)": offset,
                 "Production": nb,
-                "Taux four": round(taux, 1),
+                "Taux four (%)": round(taux, 1),
                 "Latence moy": round(lat, 2),
                 "Score": round(score, 2)
             })
@@ -239,8 +259,8 @@ with tab2:
                 best_score = score
                 best_df = df
 
-        st.subheader("Comparaison")
+        st.subheader("📊 Comparaison scénarios")
         st.dataframe(pd.DataFrame(results))
 
-        st.subheader("Meilleur scénario")
+        st.subheader("🏆 Meilleur scénario")
         st.dataframe(best_df)
