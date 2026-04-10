@@ -152,46 +152,51 @@ def simulate():
 
 def build_gantt(df):
 
+    def to_hour_float(t):
+        h = int(t[:2])
+        m = int(t[3:])
+        return h + m / 60
+
     tasks = []
 
     for _, row in df.iterrows():
 
-        def to_min(t):
-            return int(t[:2]) * 60 + int(t[3:])
+        label = f"B{row['Bras']} - {row['Produit']}"
 
-        label = f"Bras {row['Bras']} - {row['Produit']}"
-
+        # FOUR
         tasks.append({
             "Task": label,
-            "Start": to_min(row["Début Four"]),
-            "Finish": to_min(row["Fin Four"]),
+            "Start": to_hour_float(row["Début Four"]),
+            "Finish": to_hour_float(row["Fin Four"]),
             "Type": "Four"
         })
 
+        # REFROID
         tasks.append({
             "Task": label,
-            "Start": to_min(row["Début Refroid"]),
-            "Finish": to_min(row["Fin Refroid"]),
-            "Type": "Refroidissement"
+            "Start": to_hour_float(row["Début Refroid"]),
+            "Finish": to_hour_float(row["Fin Refroid"]),
+            "Type": "Refroid"
         })
 
+        # DECO
         tasks.append({
             "Task": label,
-            "Start": to_min(row["Début Déco"]),
-            "Finish": to_min(row["Fin Déco"]),
-            "Type": "Décoffrage"
+            "Start": to_hour_float(row["Début Déco"]),
+            "Finish": to_hour_float(row["Fin Déco"]),
+            "Type": "Déco"
         })
 
+        # LATENCE
         if row["Latence (min)"] > 0:
             tasks.append({
                 "Task": label,
-                "Start": to_min(row["Fin Refroid"]),
-                "Finish": to_min(row["Début Déco"]),
+                "Start": to_hour_float(row["Fin Refroid"]),
+                "Finish": to_hour_float(row["Début Déco"]),
                 "Type": "LATENCE"
             })
 
     return pd.DataFrame(tasks)
-
 
 # =========================
 # EXECUTION
@@ -228,9 +233,13 @@ if st.button("Lancer la simulation"):
     st.dataframe(df)
 
     # GANTT
-    st.subheader("📊 Diagramme de Gantt")
+  st.subheader("📊 Diagramme de Gantt")
 
-    gantt_df = build_gantt(df)
+gantt_df = build_gantt(df)
+
+if gantt_df.empty:
+    st.warning("Aucune donnée à afficher")
+else:
 
     fig = px.timeline(
         gantt_df,
@@ -240,11 +249,25 @@ if st.button("Lancer la simulation"):
         color="Type",
         color_discrete_map={
             "Four": "green",
-            "Refroidissement": "blue",
-            "Décoffrage": "purple",
+            "Refroid": "blue",
+            "Déco": "purple",
             "LATENCE": "red"
         }
     )
+
+    fig.update_yaxes(autorange="reversed")
+
+    # 🔥 Axe propre sans date
+    fig.update_layout(
+        xaxis=dict(
+            range=[4.87, 22],  # 04:52 → 22:00
+            tickvals=list(range(5, 23)),
+            ticktext=[f"{h:02d}:00" for h in range(5, 23)],
+            title="Heures"
+        )
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
     fig.update_yaxes(autorange="reversed")
 
