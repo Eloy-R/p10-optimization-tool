@@ -22,12 +22,15 @@ HORAIRES = {
 
 END_TIME = 21 * 60 + 45
 
+LATENCE_CIBLE = 1
+LATENCE_MAX = 10
+
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Version industrielle")
+st.title("🔥 Simulateur P10 - Régulation intelligente")
 
 jour = st.selectbox("Jour", list(HORAIRES.keys()))
 
@@ -94,16 +97,29 @@ def simulate():
         end_refroid = end_four + data["refroid"]
 
         # =====================
-        # CONTRAINTE LATENCE CUVE
+        # REGULATION LATENCE
         # =====================
         start_deco_estime = max(end_refroid, last_deco_end)
         latence_estimee = start_deco_estime - end_refroid
 
-        if produit == "cuve" and latence_estimee > 20:
-            decalage = latence_estimee - 20
-            start_four += decalage
-            end_four += decalage
-            end_refroid += decalage
+        # 🔴 CONTRAINTE MAX
+        if latence_estimee > LATENCE_MAX:
+            decalage = latence_estimee - LATENCE_MAX
+
+        # 🟢 OBJECTIF CIBLE
+        elif latence_estimee > LATENCE_CIBLE:
+            decalage = (latence_estimee - LATENCE_CIBLE) * 0.7
+
+        # 🔵 TROP FAIBLE → accélérer légèrement
+        elif latence_estimee < 0.5:
+            decalage = -(min(0.5 - latence_estimee, 2))
+
+        else:
+            decalage = 0
+
+        start_four += decalage
+        end_four += decalage
+        end_refroid += decalage
 
         # =====================
         # PAUSE FOUR
@@ -143,7 +159,7 @@ def simulate():
             "Fin Refroid": format_time(end_refroid),
             "Début Déco": format_time(start_deco),
             "Fin Déco": format_time(end_deco),
-            "Latence (min)": latence
+            "Latence (min)": round(latence, 2)
         })
 
         last_four_end = end_four
@@ -177,10 +193,6 @@ if st.button("Lancer la simulation"):
     latence_moy = df["Latence (min)"].mean()
     latence_max = df["Latence (min)"].max()
 
-    # Vérif contrainte cuve
-    df_cuves = df[df["Produit"] == "cuve"]
-    non_conformes = (df_cuves["Latence (min)"] > 20).sum()
-
     # =========================
     # AFFICHAGE
     # =========================
@@ -194,10 +206,9 @@ if st.button("Lancer la simulation"):
 
     st.subheader("📈 Qualité flux")
 
-    col4, col5, col6 = st.columns(3)
-    col4.metric("Latence moyenne", round(latence_moy, 1))
-    col5.metric("Latence max", latence_max)
-    col6.metric("Cuves non conformes", non_conformes)
+    col4, col5 = st.columns(2)
+    col4.metric("Latence moyenne", round(latence_moy, 2))
+    col5.metric("Latence max", round(latence_max, 2))
 
     st.subheader("📋 Détail complet")
 
