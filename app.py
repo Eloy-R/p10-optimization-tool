@@ -21,16 +21,19 @@ HORAIRES = {
 }
 
 END_TIME = 21 * 60 + 45
-ROTATION = 1  # 1 min carrousel
+
+# 🔥 NOUVEAU
+TRANSITION = 1  # minute entre zones
 
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - By-pass automatique (0 latence)")
+st.title("🔥 Simulateur P10 - Flux réaliste avec transitions")
 
 jour = st.selectbox("Jour de production", list(HORAIRES.keys()))
+
 START_TIME = HORAIRES[jour]
 
 
@@ -55,79 +58,75 @@ def to_minutes(t):
 def simulate():
     results = []
 
-    last_four_start = START_TIME - ROTATION
+    last_four_end = START_TIME
     last_deco_end = START_TIME
 
     i = 0
 
     while True:
-
-        bras = BRAS_SEQUENCE[i % 4]
-
-        # 🔁 alternance produit
         produit = "cloison" if i % 2 == 0 else "cuve"
+        bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
-        # =====================
-        # CARROUSEL
-        # =====================
-        start_four = last_four_start + ROTATION
-
+        # Temps four
         four_time = data["four"]
         if i < 4:
             four_time += 2
 
+        # =====================
+        # CALCUL OPTIMAL
+        # =====================
+
+        target_start_deco = last_deco_end
+
+        # 🔥 intégrer transition AVANT déco
+        target_end_refroid = target_start_deco - TRANSITION
+
+        # 🔥 intégrer transition APRES four
+        target_end_four = target_end_refroid - data["refroid"] - TRANSITION
+
+        target_start_four = target_end_four - four_time
+
+        # Respect contrainte four
+        start_four = max(last_four_end, target_start_four)
         end_four = start_four + four_time
-        end_refroid = end_four + data["refroid"]
+
+        if end_four > END_TIME:
+            break
 
         # =====================
-        # TEST LATENCE
+        # REFROID (avec transition)
         # =====================
-        start_deco_test = max(end_refroid, last_deco_end)
-        latence_test = start_deco_test - end_refroid
+        start_refroid = end_four + TRANSITION
+        end_refroid = start_refroid + data["refroid"]
 
         # =====================
-        # DECISION BY-PASS
+        # DECO (avec transition)
         # =====================
-        if latence_test > 0:
-            # 🔥 BY-PASS
-            results.append({
-                "Bras": bras,
-                "Produit": "BY-PASS",
-                "Début Four": format_time(start_four),
-                "Fin Four": "-",
-                "Fin Refroid": "-",
-                "Début Déco": "-",
-                "Fin Déco": "-",
-                "Latence (min)": "-"
-            })
-
-            last_four_start = start_four
-            i += 1
-            continue
-
-        # =====================
-        # VALIDATION PRODUIT
-        # =====================
-        start_refroid = end_four
-        start_deco = max(end_refroid, last_deco_end)
+        start_deco = max(end_refroid + TRANSITION, last_deco_end)
         end_deco = start_deco + data["deco"]
+
+        latence = start_deco - (end_refroid + TRANSITION)
 
         if end_deco > END_TIME:
             break
 
+        # =====================
+        # SAVE
+        # =====================
         results.append({
             "Bras": bras,
             "Produit": produit,
             "Début Four": format_time(start_four),
             "Fin Four": format_time(end_four),
+            "Début Refroid": format_time(start_refroid),
             "Fin Refroid": format_time(end_refroid),
             "Début Déco": format_time(start_deco),
             "Fin Déco": format_time(end_deco),
-            "Latence (min)": 0
+            "Latence (min)": round(latence, 2)
         })
 
-        last_four_start = start_four
+        last_four_end = end_four
         last_deco_end = end_deco
 
         i += 1
@@ -145,14 +144,34 @@ if st.button("Lancer la simulation"):
 
     nb_cuves = len(df[df["Produit"] == "cuve"])
     nb_cloisons = len(df[df["Produit"] == "cloison"])
-    nb_bypass = len(df[df["Produit"] == "BY-PASS"])
 
-    st.subheader("📊 Production")
+    total_four_time = sum(
+        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+        for _, r in df.iterrows()
+    )
+
+    total_available_time = END_TIME - START_TIME
+    taux_four = (total_four_time / total_available_time) * 100
+
+    latence_moy = df["Latence (min)"].mean()
+    latence_max = df["Latence (min)"].max()
+
+    # =========================
+    # AFFICHAGE
+    # =========================
+
+    st.subheader("📊 Performance")
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Cuves", nb_cuves)
     col2.metric("Cloisons", nb_cloisons)
-    col3.metric("By-pass", nb_bypass)
+    col3.metric("Utilisation four (%)", round(taux_four, 1))
+
+    st.subheader("📈 Qualité flux")
+
+    col4, col5 = st.columns(2)
+    col4.metric("Latence moyenne", round(latence_moy, 2))
+    col5.metric("Latence max", round(latence_max, 2))
 
     st.subheader("📋 Détail complet")
 
