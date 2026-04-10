@@ -522,118 +522,12 @@ with tab3:
             st.success("👉 Temps morts maîtrisés")
     else:
         st.success("👉 Aucun temps mort")
+
     # =========================
-    # 🔄 ANALYSE MIX PRODUITS
-    # =========================
-
-    st.subheader("🔄 Analyse mix produits par bras")
-
-    configs = {
-        "CCVV": ["cloison", "cloison", "cuve", "cuve"],
-        "CVVC": ["cuve", "cloison", "cloison", "cuve"],
-        "CVCV": ["cuve", "cloison", "cuve", "cloison"],
-        "VVCC": ["cuve", "cuve", "cloison", "cloison"],
-        "CVCV2": ["cloison", "cuve", "cloison", "cuve"],
-    }
-
-    mix_results = []
-
-    for name, pattern in configs.items():
-
-        # 🔥 simulation alternative (sans toucher simulate())
-        results_alt = []
-
-        last_four_end = START_TIME
-        last_deco_end = START_TIME
-
-        i = 0
-
-        while True:
-
-            produit = pattern[i % 4]
-            bras = BRAS_SEQUENCE[i % 4]
-            data = PRODUITS[produit]
-
-            four_time = data["four"] + 2 if i < 4 else data["four"]
-
-            if i == 0:
-                start_four = START_TIME
-            else:
-                start_four = last_four_end + GAP_FOUR
-
-            end_four = start_four + four_time
-
-            start_refroid = end_four
-            end_refroid = start_refroid + data["refroid"]
-
-            start_deco = max(end_refroid, last_deco_end)
-
-            if pause_active and PAUSE_START <= start_deco < PAUSE_END:
-                start_deco = PAUSE_END
-
-            latence = start_deco - end_refroid
-
-            if latence > latence_max:
-                retard = latence - latence_max
-
-                start_four += retard
-                end_four += retard
-                start_refroid += retard
-                end_refroid += retard
-
-                start_deco = max(end_refroid, last_deco_end)
-
-                if pause_active and PAUSE_START <= start_deco < PAUSE_END:
-                    start_deco = PAUSE_END
-
-                latence = start_deco - end_refroid
-
-            end_deco = start_deco + data["deco"]
-
-            if end_deco > END_TIME:
-                break
-
-            results_alt.append({
-                "Produit": produit,
-                "Latence": latence
-            })
-
-            last_four_end = end_four
-            last_deco_end = end_deco
-
-            i += 1
-
-        if len(results_alt) == 0:
-            continue
-
-        df_alt = pd.DataFrame(results_alt)
-
-        nb_cuves = len(df_alt[df_alt["Produit"] == "cuve"])
-        nb_cloisons = len(df_alt[df_alt["Produit"] == "cloison"])
-
-        mix_results.append({
-            "Configuration": name,
-            "Cuves": nb_cuves,
-            "Cloisons": nb_cloisons,
-            "Total": len(df_alt),
-            "Latence moyenne": round(df_alt["Latence"].mean(), 2)
-        })
-
-    df_mix = pd.DataFrame(mix_results).sort_values(by="Total", ascending=False)
-
-    st.dataframe(df_mix)
-
-    # 🏆 meilleur mix
-    best_mix = df_mix.iloc[0]
-
-    st.success(
-        f"🏆 Meilleur mix : {best_mix['Configuration']} → {best_mix['Total']} pièces"
-    )
-    # =========================
-    # 🧠 MIX OPTIMAL ANNUEL (EXPERT)
+    # MIX OPTIMAL ANNUEL 
     # =========================
 
-    st.subheader("🧠 Optimisation mix annuel (robustesse)")
+    st.subheader("Optimisation mix annuel V:Cuve et C: Cloison")
 
     configs = {
         "CCVV": ["cloison", "cloison", "cuve", "cuve"],
