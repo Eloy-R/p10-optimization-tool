@@ -27,9 +27,9 @@ jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 
 # 🔥 horaires + décalage initial du four (+2 min)
 if jour == "Lundi":
-    START_TIME = 6 * 60 + 25 + 2
+    START_TIME = 6 * 60 + 25
 else:
-    START_TIME = 4 * 60 + 52 + 2
+    START_TIME = 4 * 60 + 52
 
 
 # =========================
