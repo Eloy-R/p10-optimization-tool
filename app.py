@@ -232,7 +232,7 @@ with tab2:
 
     st.title("🚀 Optimisation avancée production")
 
-    st.markdown("### 🎯 Maximiser la production sous contraintes")
+    st.markdown("### 🎯 Maximiser production + utilisation four")
 
     if st.button("Lancer optimisation avancée"):
 
@@ -240,43 +240,46 @@ with tab2:
         best_score = -999
         best_config = None
 
+        # 🔥 pauses dynamiques
         pauses = [
-            ("Pas de pause", False, 0),
-            ("Pause 30 min", True, 30),
-            ("Pause 1h", True, 60),
+            ("Pas de pause", False, None),
+            ("11:30-12:00", True, (11*60+30, 12*60)),
+            ("12:00-12:30", True, (12*60, 12*60+30)),
+            ("12:30-13:00", True, (12*60+30, 13*60)),
+            ("12:00-13:00", True, (12*60, 13*60)),
         ]
 
         latences = range(0, 11)
 
-        for pause_name, pause_active_val, pause_duree in pauses:
+        for pause_name, pause_active_val, pause_window in pauses:
 
             for lat in latences:
 
-                # 🔥 backup valeurs globales (SANS global keyword)
-                pause_end_original = PAUSE_END
-                latence_original = latence_max
+                # 🔥 backup
+                pause_start_orig = PAUSE_START
+                pause_end_orig = PAUSE_END
+                latence_orig = latence_max
 
-                # 🔥 pause dynamique
+                # 🔥 inject pause dynamique
                 if pause_active_val:
-                    pause_end_test = PAUSE_START + pause_duree
+                    globals()["PAUSE_START"] = pause_window[0]
+                    globals()["PAUSE_END"] = pause_window[1]
                 else:
-                    pause_end_test = PAUSE_START
+                    globals()["PAUSE_START"] = 0
+                    globals()["PAUSE_END"] = 0
 
-                # ⚠️ on injecte temporairement
-                globals()["PAUSE_END"] = pause_end_test
                 globals()["latence_max"] = lat
 
-                # 🔥 appel simulateur (INTOUCHABLE)
                 df = simulate()
 
-                # 🔥 restore valeurs
-                globals()["PAUSE_END"] = pause_end_original
-                globals()["latence_max"] = latence_original
+                # 🔥 restore
+                globals()["PAUSE_START"] = pause_start_orig
+                globals()["PAUSE_END"] = pause_end_orig
+                globals()["latence_max"] = latence_orig
 
                 if df.empty:
                     continue
 
-                # KPI
                 nb_cuves = len(df[df["Produit"] == "cuve"])
                 nb_cloisons = len(df[df["Produit"] == "cloison"])
                 total_prod = nb_cuves + nb_cloisons
@@ -291,15 +294,12 @@ with tab2:
 
                 lat_moy = df["Latence (min)"].mean()
 
-                # 🎯 score
                 score = total_prod * 100 + taux_four - lat_moy * 2
 
                 results.append({
                     "Pause": pause_name,
                     "Latence max": lat,
-                    "Cuves": nb_cuves,
-                    "Cloisons": nb_cloisons,
-                    "Total": total_prod,
+                    "Production": total_prod,
                     "Taux four (%)": round(taux_four, 1),
                     "Latence moy": round(lat_moy, 2),
                     "Score": round(score, 1)
@@ -311,32 +311,95 @@ with tab2:
 
         df_results = pd.DataFrame(results).sort_values(by="Score", ascending=False)
 
-        st.subheader("📊 Tous les scénarios")
+        # =========================
+        # TABLEAU
+        # =========================
+
+        st.subheader("📊 Scénarios")
         st.dataframe(df_results)
+
+        # =========================
+        # MEILLEUR
+        # =========================
 
         st.subheader("🏆 Meilleur scénario")
 
         st.success(
             f"""
             🔥 {best_config['Pause']}
-            - Latence max : {best_config['Latence max']} min
-            - Production : {best_config['Total']} pièces
+            - Latence : {best_config['Latence max']} min
+            - Production : {best_config['Production']}
             - Taux four : {best_config['Taux four (%)']}%
             """
         )
 
-        # 💡 insight simple
-        st.subheader("💡 Insight")
+        # =========================
+        # 📊 PARETO
+        # =========================
 
-        best_rows = df_results.head(5)
+        st.subheader("📈 Pareto Production vs Four")
 
-        for i in range(1, len(best_rows)):
-            prev = best_rows.iloc[i-1]
-            curr = best_rows.iloc[i]
+        fig = px.scatter(
+            df_results,
+            x="Taux four (%)",
+            y="Production",
+            color="Pause",
+            hover_data=["Latence max"],
+            title="Optimisation production"
+        )
 
-            if curr["Total"] > prev["Total"]:
-                gain = curr["Total"] - prev["Total"]
+        st.plotly_chart(fig, use_container_width=True)
 
-                st.info(
-                    f"👉 En augmentant la latence à {curr['Latence max']} min → +{gain} pièce(s)"
-                )
+        # =========================
+        # ⏱️ OVERTIME INTELLIGENT
+        # =========================
+
+        st.subheader("⏱️ Overtime intelligent")
+
+        overtime_results = []
+
+        for extra in [0, 15, 30, 45, 60]:
+
+            # hack simple : prolonger END_TIME temporairement
+            original_end = END_TIME
+            globals()["END_TIME"] = original_end + extra
+
+            df = simulate()
+
+            globals()["END_TIME"] = original_end
+
+            if df.empty:
+                continue
+
+            total = len(df)
+
+            overtime_results.append({
+                "Overtime (min)": extra,
+                "Production": total
+            })
+
+        df_ot = pd.DataFrame(overtime_results)
+
+        st.dataframe(df_ot)
+
+        # 💡 insight overtime
+        for i in range(1, len(df_ot)):
+            if df_ot.iloc[i]["Production"] > df_ot.iloc[i-1]["Production"]:
+                gain = df_ot.iloc[i]["Production"] - df_ot.iloc[i-1]["Production"]
+                extra = df_ot.iloc[i]["Overtime (min)"]
+
+                st.info(f"👉 +{extra} min permet +{gain} pièce(s)")
+
+        # =========================
+        # 💡 INSIGHT GLOBAL (FIX)
+        # =========================
+
+        st.subheader("💡 Insight global")
+
+        top = df_results.head(3)
+
+        for i in range(len(top)):
+            st.write(
+                f"👉 {top.iloc[i]['Pause']} | latence {top.iloc[i]['Latence max']} min → "
+                f"{top.iloc[i]['Production']} pièces"
+            )
