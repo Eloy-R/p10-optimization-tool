@@ -19,9 +19,11 @@ GAP_FOUR = 1
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Pilotage production")
+st.title("🔥 Simulateur P10 - Mode réel vs optimisé")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
+mode = st.selectbox("Mode de simulation", ["Optimisé (0 latence)", "Réel"])
+
 latence_max = st.slider("Latence max (min)", 0, 10, 10)
 
 if jour == "Lundi":
@@ -61,45 +63,55 @@ def simulate():
         refroid = data["refroid"]
         deco = data["deco"]
 
-        # +2 min sur les 4 premiers cycles
+        # +2 min sur 4 premiers cycles
         if i < 4:
             four_time = base_four + 2
         else:
             four_time = base_four
 
         # =====================
-        # CALCUL CIBLE
+        # MODE OPTIMISÉ
         # =====================
 
-        target_start_deco = last_deco_end
-        target_end_refroid = target_start_deco
-        target_end_four = target_end_refroid - refroid
-        target_start_four = target_end_four - four_time
+        if mode == "Optimisé (0 latence)":
+
+            target_start_deco = last_deco_end
+            target_end_refroid = target_start_deco
+            target_end_four = target_end_refroid - refroid
+            target_start_four = target_end_four - four_time
+
+            if i == 0:
+                start_four = START_TIME
+            else:
+                min_start = last_four_end + GAP_FOUR
+                start_four = max(target_start_four, min_start)
 
         # =====================
-        # CONTRAINTE FOUR
+        # MODE RÉEL
         # =====================
 
-        if i == 0:
-            start_four = START_TIME
         else:
-            min_start = last_four_end + GAP_FOUR
-            start_four = max(target_start_four, min_start)
+
+            if i == 0:
+                start_four = START_TIME
+            else:
+                start_four = last_four_end + GAP_FOUR
 
         # =====================
-        # CALCUL NORMAL
+        # CALCUL FLUX
         # =====================
 
         end_four = start_four + four_time
         start_refroid = end_four
         end_refroid = start_refroid + refroid
+
         start_deco = max(end_refroid, last_deco_end)
+
+        latence = start_deco - end_refroid
 
         # =====================
         # CONTRAINTE LATENCE
         # =====================
-
-        latence = start_deco - end_refroid
 
         if latence > latence_max:
             retard = latence - latence_max
@@ -116,6 +128,10 @@ def simulate():
 
         if end_deco > END_TIME:
             break
+
+        # =====================
+        # SAVE
+        # =====================
 
         results.append({
             "Bras": bras,
@@ -145,10 +161,6 @@ if st.button("Lancer la simulation"):
 
     df = simulate()
 
-    # =====================
-    # KPI
-    # =====================
-
     nb_cuves = len(df[df["Produit"] == "cuve"])
     nb_cloisons = len(df[df["Produit"] == "cloison"])
 
@@ -160,17 +172,13 @@ if st.button("Lancer la simulation"):
     total_available_time = END_TIME - START_TIME
     taux_four = (total_four_time / total_available_time) * 100
 
-    # =====================
-    # AFFICHAGE
-    # =====================
-
     st.subheader("📊 Production")
 
     col1, col2 = st.columns(2)
-    col1.metric("Cuves produites", nb_cuves)
-    col2.metric("Cloisons produites", nb_cloisons)
+    col1.metric("Cuves", nb_cuves)
+    col2.metric("Cloisons", nb_cloisons)
 
-    st.subheader("🔥 Performance four")
+    st.subheader("🔥 Performance")
 
     st.metric("Utilisation du four (%)", round(taux_four, 1))
 
