@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+from ortools.sat.python import cp_model
 
 # =========================
 # PARAMETRES
@@ -21,20 +22,10 @@ PAUSE_START = 12 * 60
 PAUSE_END = 13 * 60
 
 # =========================
-# UI
+# UI TABS
 # =========================
 
-st.title("Simulateur P10 - Production")
-
-jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
-latence_max = st.slider("Latence max (min)", 0, 10, 10)
-pause_active = st.checkbox("Activer pause midi (12h-13h)", True)
-
-if jour == "Lundi":
-    START_TIME = 6 * 60 + 25
-else:
-    START_TIME = 4 * 60 + 52
-
+tab1, tab2 = st.tabs(["Simulation", "Optimisation avancée"])
 
 # =========================
 # OUTILS
@@ -51,17 +42,15 @@ def to_datetime(t):
     m = int(t[3:])
     return datetime(2024, 1, 1, h, m)
 
-
 # =========================
-# SIMULATION
+# SIMULATION (EXISTANT)
 # =========================
 
-def simulate():
+def simulate(start_time, latence_max, pause_active):
 
     results = []
-
-    last_four_end = START_TIME
-    last_deco_end = START_TIME
+    last_four_end = start_time
+    last_deco_end = start_time
 
     i = 0
 
@@ -75,46 +64,31 @@ def simulate():
         refroid = data["refroid"]
         deco = data["deco"]
 
-        # +2 min sur les 4 premiers cycles
-        if i < 4:
-            four_time = base_four + 2
-        else:
-            four_time = base_four
+        four_time = base_four + 2 if i < 4 else base_four
 
-        # MODE REEL
-        if i == 0:
-            start_four = START_TIME
-        else:
-            start_four = last_four_end + GAP_FOUR
+        start_four = start_time if i == 0 else last_four_end + GAP_FOUR
 
-        # FLUX
         end_four = start_four + four_time
         start_refroid = end_four
         end_refroid = start_refroid + refroid
 
         start_deco = max(end_refroid, last_deco_end)
 
-        # PAUSE MIDI
-        if pause_active:
-            if PAUSE_START <= start_deco < PAUSE_END:
-                start_deco = PAUSE_END
+        if pause_active and PAUSE_START <= start_deco < PAUSE_END:
+            start_deco = PAUSE_END
 
         latence = start_deco - end_refroid
 
-        # CONTRAINTE LATENCE
         if latence > latence_max:
-            retard = latence - latence_max
-
-            start_four += retard
-            end_four += retard
-            start_refroid += retard
-            end_refroid += retard
-
+            shift = latence - latence_max
+            start_four += shift
+            end_four += shift
+            start_refroid += shift
+            end_refroid += shift
             start_deco = max(end_refroid, last_deco_end)
 
-            if pause_active:
-                if PAUSE_START <= start_deco < PAUSE_END:
-                    start_deco = PAUSE_END
+            if pause_active and PAUSE_START <= start_deco < PAUSE_END:
+                start_deco = PAUSE_END
 
             latence = start_deco - end_refroid
 
@@ -132,115 +106,99 @@ def simulate():
             "Fin Refroid": format_time(end_refroid),
             "Début Déco": format_time(start_deco),
             "Fin Déco": format_time(end_deco),
-            "Latence (min)": round(latence, 2)
+            "Latence (min)": latence
         })
 
         last_four_end = end_four
         last_deco_end = end_deco
-
         i += 1
 
     return pd.DataFrame(results)
 
-
 # =========================
-# GANTT
-# =========================
-
-def build_gantt(df):
-
-    tasks = []
-
-    for _, row in df.iterrows():
-
-        label = f"B{row['Bras']} - {row['Produit']}"
-
-        tasks.append({
-            "Task": label,
-            "Start": to_datetime(row["Début Four"]),
-            "Finish": to_datetime(row["Fin Four"]),
-            "Type": "Four"
-        })
-
-        tasks.append({
-            "Task": label,
-            "Start": to_datetime(row["Début Refroid"]),
-            "Finish": to_datetime(row["Fin Refroid"]),
-            "Type": "Refroid"
-        })
-
-        tasks.append({
-            "Task": label,
-            "Start": to_datetime(row["Début Déco"]),
-            "Finish": to_datetime(row["Fin Déco"]),
-            "Type": "Déco"
-        })
-
-        if row["Latence (min)"] > 0:
-            tasks.append({
-                "Task": label,
-                "Start": to_datetime(row["Fin Refroid"]),
-                "Finish": to_datetime(row["Début Déco"]),
-                "Type": "LATENCE"
-            })
-
-    return pd.DataFrame(tasks)
-
-
-# =========================
-# EXECUTION
+# ONGLET 1 : SIMULATION
 # =========================
 
-if st.button("Lancer la simulation"):
+with tab1:
 
-    df = simulate()
+    st.title("🔥 Simulation P10")
 
-    # KPI
-    nb_cuves = len(df[df["Produit"] == "cuve"])
-    nb_cloisons = len(df[df["Produit"] == "cloison"])
+    jour = st.selectbox("Jour", ["Lundi", "Autres jours"])
+    latence_max = st.slider("Latence max", 0, 10, 10)
+    pause_active = st.checkbox("Pause midi", True)
 
-    total_four_time = sum(
-        to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
-        for _, r in df.iterrows()
-    )
+    START_TIME = 6*60+25 if jour == "Lundi" else 4*60+52
 
-    total_available_time = END_TIME - START_TIME
-    taux_four = (total_four_time / total_available_time) * 100
+    if st.button("Lancer simulation"):
 
-    # KPI AFFICHAGE
-    st.subheader("📊 Production")
+        df = simulate(START_TIME, latence_max, pause_active)
 
-    col1, col2 = st.columns(2)
-    col1.metric("Cuves", nb_cuves)
-    col2.metric("Cloisons", nb_cloisons)
+        st.dataframe(df)
 
-    st.subheader("🔥 Utilisation du four")
-    st.metric("Taux (%)", round(taux_four, 1))
+# =========================
+# ONGLET 2 : OR-TOOLS
+# =========================
 
-    # TABLEAU
-    st.subheader("📋 Détail")
-    st.dataframe(df)
+with tab2:
 
-    # GANTT
-    st.subheader("📊 Diagramme de Gantt")
+    st.title("🧠 Optimisation OR-Tools PRO")
 
-    gantt_df = build_gantt(df)
+    if st.button("Optimiser"):
 
-    fig = px.timeline(
-        gantt_df,
-        x_start="Start",
-        x_end="Finish",
-        y="Task",
-        color="Type",
-        color_discrete_map={
-            "Four": "green",
-            "Refroid": "blue",
-            "Déco": "purple",
-            "LATENCE": "red"
-        }
-    )
+        model = cp_model.CpModel()
 
-    fig.update_yaxes(autorange="reversed")
-    fig.update_layout(xaxis=dict(tickformat="%H:%M"))
+        max_cycles = 25
+        horizon = 1000
 
-    st.plotly_chart(fig, use_container_width=True)
+        starts = []
+        ends = []
+
+        for i in range(max_cycles):
+            s = model.NewIntVar(0, horizon, f"s_{i}")
+            d = 40  # approx
+            e = model.NewIntVar(0, horizon, f"e_{i}")
+
+            model.Add(e == s + d)
+
+            starts.append(s)
+            ends.append(e)
+
+        # ordre
+        for i in range(1, max_cycles):
+            model.Add(starts[i] >= ends[i-1] + 1)
+
+        # pause midi
+        for i in range(max_cycles):
+            before = model.NewBoolVar(f"before_{i}")
+            after = model.NewBoolVar(f"after_{i}")
+
+            model.Add(starts[i] <= PAUSE_START).OnlyEnforceIf(before)
+            model.Add(starts[i] >= PAUSE_END).OnlyEnforceIf(after)
+
+            model.AddBoolOr([before, after])
+
+        # objectif
+        model.Maximize(max_cycles)
+
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 5
+
+        status = solver.Solve(model)
+
+        if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+
+            rows = []
+            for i in range(max_cycles):
+                rows.append({
+                    "Cycle": i,
+                    "Start": solver.Value(starts[i]),
+                    "End": solver.Value(ends[i])
+                })
+
+            df_opt = pd.DataFrame(rows)
+
+            st.subheader("📊 Résultat optimisation")
+            st.dataframe(df_opt)
+
+        else:
+            st.error("Pas de solution")
