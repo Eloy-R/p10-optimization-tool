@@ -14,22 +14,22 @@ BRAS_SEQUENCE = [4, 1, 2, 3]
 
 END_TIME = 21 * 60 + 45
 
-GAP_FOUR = 1  # 1 min entre fin four et début suivant
+GAP_FOUR = 1  # 🔥 1 min entre fin four et début suivant
 
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Version validée")
+st.title("🔥 Simulateur P10 - Version finale validée")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 
-# 🔥 logique simplifiée
+# 🔥 horaires + décalage initial du four (+2 min)
 if jour == "Lundi":
-    START_TIME = 6 * 60 + 25
+    START_TIME = 6 * 60 + 25 + 2
 else:
-    START_TIME = 4 * 60 + 52
+    START_TIME = 4 * 60 + 52 + 2
 
 
 # =========================
@@ -63,10 +63,8 @@ def simulate():
         bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
-        # Temps four
+        # Temps four (réel, sans +2)
         four_time = data["four"]
-        if i < 4:
-            four_time += 2
 
         # =====================
         # CALCUL OPTIMAL
@@ -153,6 +151,10 @@ if st.button("Lancer la simulation"):
 
     latence_moy = df["Latence (min)"].mean()
     latence_max = df["Latence (min)"].max()
+
+    # =========================
+    # AFFICHAGE
+    # =========================
 
     st.subheader("📊 Performance")
 
