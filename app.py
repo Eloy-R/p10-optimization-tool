@@ -1,196 +1,167 @@
-import streamlit as st
-import pandas as pd
+# =========================
+# SIMULATEUR LIGNE P10
+# =========================
 
-st.set_page_config(layout="wide")
+# Temps en minutes
+PRODUITS = {
+    "cloison": {"four": 35, "refroid": 45, "deco": 40},
+    "cuve": {"four": 45, "refroid": 46, "deco": 60},
+}
 
-st.title("🏭 P10 - Simulation Production")
+BRAS_SEQUENCE = [4, 1, 2, 3]
 
-# =============================
-# PARAMÈTRES
-# =============================
+# Heure de départ (ex : mardi 04:52)
+START_TIME = 4 * 60 + 52
 
-MAX_LATENCE = st.sidebar.slider("Latence max (min)", 0, 60, 20)
 
-pause_duration = st.sidebar.selectbox(
-    "Durée pause midi",
-    [0, 30, 60]
-)
+# =========================
+# PARAMETRES PAUSE MIDI
+# =========================
 
-pause_type = st.sidebar.selectbox(
-    "Type de pause",
-    ["Aucune", "Tout à l'arrêt", "Décoffrage uniquement"]
-)
+PAUSE_ENABLED = True
+PAUSE_START = 12 * 60  # 12:00
+PAUSE_DURATION = 60    # 30 ou 60
+PAUSE_MODE = "deco_only"  # "full_stop" ou "deco_only"
 
-# =============================
-# OUTILS TEMPS
-# =============================
 
-def to_minutes(h, m):
-    return h * 60 + m
+# =========================
+# OUTILS
+# =========================
 
-def to_hhmm(minutes):
+def format_time(minutes):
     h = int(minutes // 60)
     m = int(minutes % 60)
     return f"{h:02d}:{m:02d}"
 
-# =============================
-# CONFIG PROCESS
-# =============================
 
-TIMES = {
-    "cuve": {"four": 45, "cool": 46, "deco": 60},
-    "cloison": {"four": 35, "cool": 45, "deco": 40}
-}
+def generate_sequence(n_cycles):
+    sequence = []
+    for i in range(n_cycles):
+        sequence.append("cloison" if i % 2 == 0 else "cuve")
+    return sequence
 
-# ⚠️ ordre réel carrousel
-BRAS_ORDER = [
-    ("Bras 4", "cloison"),
-    ("Bras 1", "cuve"),
-    ("Bras 2", "cloison"),
-    ("Bras 3", "cuve"),
-]
 
-start_time = to_minutes(6, 25)
-end_time = to_minutes(21, 45)
+def is_in_pause(time):
+    if not PAUSE_ENABLED:
+        return False
+    return PAUSE_START <= time < PAUSE_START + PAUSE_DURATION
 
-pause_start = to_minutes(12, 0)
-pause_end = pause_start + pause_duration
 
-MOVE = 1  # minute entre bras
+def apply_pause(time):
+    if not PAUSE_ENABLED:
+        return time
 
-# =============================
-# SIMULATION
-# =============================
+    pause_end = PAUSE_START + PAUSE_DURATION
 
-def simulate():
+    if is_in_pause(time):
+        return pause_end
 
-    rows = []
+    return time
 
-    current_time = start_time
-    deco_available = start_time
 
-    index = 0
-    first_cycle_done = {b: False for b, _ in BRAS_ORDER}
+# =========================
+# MOTEUR DE SIMULATION
+# =========================
 
-    while current_time < end_time:
+def simulate(sequence):
+    results = []
 
-        bras, prod = BRAS_ORDER[index % len(BRAS_ORDER)]
-        t = TIMES[prod]
+    last_four_end = START_TIME
+    last_deco_end = START_TIME
 
-        # =============================
-        # TEMPS FOUR (+2 min premier cycle)
-        # =============================
-        if not first_cycle_done[bras]:
-            four_time = t["four"] + 2
-            first_cycle_done[bras] = True
-        else:
-            four_time = t["four"]
+    for i, produit in enumerate(sequence):
+        bras = BRAS_SEQUENCE[i % 4]
+        data = PRODUITS[produit]
 
-        start_four = current_time
+        # Temps four (avec +2 min au démarrage)
+        four_time = data["four"]
+        if i < 4:
+            four_time += 2
+
+        # =====================
+        # FOUR
+        # =====================
+        start_four = last_four_end
+
+        if PAUSE_ENABLED and PAUSE_MODE == "full_stop":
+            start_four = apply_pause(start_four)
+
         end_four = start_four + four_time
 
-        # =============================
-        # PAUSE (cas tout à l’arrêt)
-        # =============================
-        if pause_type == "Tout à l'arrêt":
-            if start_four < pause_end and end_four > pause_start:
-                start_four = max(start_four, pause_end)
-                end_four = start_four + four_time
+        # =====================
+        # REFROIDISSEMENT
+        # =====================
+        end_refroid = end_four + data["refroid"]
 
-        # =============================
-        # REFROID
-        # =============================
-        end_cool = end_four + t["cool"]
-
-        # =============================
-        # GESTION PAUSE DÉCO
-        # =============================
-        if pause_type == "Décoffrage uniquement":
-            if deco_available >= pause_start and deco_available < pause_end:
-                deco_available = pause_end
-
-        # =============================
-        # LATENCE
-        # =============================
-        start_deco = max(end_cool, deco_available)
-        latence = start_deco - end_cool
-
-        # =============================
-        # AJUSTEMENT LATENCE
-        # =============================
-        if latence > MAX_LATENCE:
-            delay = latence - MAX_LATENCE
-            current_time += delay
-
-            start_four = current_time
-            end_four = start_four + four_time
-            end_cool = end_four + t["cool"]
-            start_deco = max(end_cool, deco_available)
-
-        # =============================
+        # =====================
         # DECOFFRAGE
-        # =============================
-        end_deco = start_deco + t["deco"]
+        # =====================
+        start_deco = max(end_refroid, last_deco_end)
 
-        # sécurité pause déco
-        if pause_type != "Aucune":
-            if start_deco < pause_end and start_deco >= pause_start:
-                start_deco = pause_end
-                end_deco = start_deco + t["deco"]
+        # Gestion pause (interdiction de décoffrer)
+        start_deco = apply_pause(start_deco)
 
-        if end_deco > end_time:
-            break
+        end_deco = start_deco + data["deco"]
 
-        rows.append({
-            "Bras": bras,
-            "Produit": prod.capitalize(),
-            "Four début": start_four,
-            "Four fin": end_four,
-            "Refroid fin": end_cool,
-            "Déco début": start_deco,
-            "Déco fin": end_deco,
-            "Latence": latence
+        # =====================
+        # LATENCE
+        # =====================
+        latence = start_deco - end_refroid
+
+        # =====================
+        # STOCKAGE
+        # =====================
+        results.append({
+            "cycle": i + 1,
+            "bras": bras,
+            "produit": produit,
+            "start_four": start_four,
+            "end_four": end_four,
+            "end_refroid": end_refroid,
+            "start_deco": start_deco,
+            "end_deco": end_deco,
+            "latence": latence
         })
 
-        # =============================
-        # AVANCEMENT CARROUSEL
-        # =============================
-        current_time = current_time + MOVE
-        deco_available = end_deco
-        index += 1
+        # =====================
+        # UPDATE
+        # =====================
+        last_four_end = end_four
+        last_deco_end = end_deco
 
-    return pd.DataFrame(rows)
+    return results
 
-# =============================
-# RUN
-# =============================
 
-df = simulate()
+# =========================
+# AFFICHAGE
+# =========================
 
-# =============================
-# FORMAT TABLE
-# =============================
+def print_results(results):
+    print("\n=== RESULTATS SIMULATION P10 ===\n")
 
-st.subheader("📋 Flux global")
+    print(
+        f"{'Cycle':<6} {'Bras':<5} {'Produit':<10} "
+        f"{'Début Four':<10} {'Fin Four':<10} "
+        f"{'Fin Refroid':<12} {'Début Déco':<12} "
+        f"{'Fin Déco':<10} {'Latence':<8}"
+    )
 
-df_display = df.copy()
+    print("-" * 95)
 
-for col in ["Four début","Four fin","Refroid fin","Déco début","Déco fin"]:
-    df_display[col] = df_display[col].apply(to_hhmm)
+    for r in results:
+        print(
+            f"{r['cycle']:<6} {r['bras']:<5} {r['produit']:<10} "
+            f"{format_time(r['start_four']):<10} {format_time(r['end_four']):<10} "
+            f"{format_time(r['end_refroid']):<12} {format_time(r['start_deco']):<12} "
+            f"{format_time(r['end_deco']):<10} {r['latence']:<8}"
+        )
 
-# 🔥 ordre flux réel (PAS groupé)
-df_display = df_display.reset_index(drop=True)
 
-st.dataframe(df_display, use_container_width=True)
+# =========================
+# MAIN
+# =========================
 
-# =============================
-# KPI
-# =============================
-
-st.subheader("📊 KPI")
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Production totale", len(df))
-col2.metric("Latence max", int(df["Latence"].max()))
-col3.metric("Latence moyenne", int(df["Latence"].mean()))
+if __name__ == "__main__":
+    sequence = generate_sequence(20)
+    results = simulate(sequence)
+    print_results(results)
