@@ -42,13 +42,12 @@ def to_datetime(t):
     return datetime(2024, 1, 1, h, m)
 
 # =========================
-# SIMULATION (TON MOTEUR)
+# SIMULATION (MOTEUR STABLE)
 # =========================
 
 def simulate(start_time, latence_max, pause_active):
 
     results = []
-
     last_four_end = start_time
     last_deco_end = start_time
 
@@ -60,41 +59,40 @@ def simulate(start_time, latence_max, pause_active):
         bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
-        base_four = data["four"]
-        refroid = data["refroid"]
-        deco = data["deco"]
+        four_time = data["four"] + 2 if i < 4 else data["four"]
 
-        # +2 min sur 4 premiers cycles
-        if i < 4:
-            four_time = base_four + 2
-        else:
-            four_time = base_four
-
-        # MODE REEL (inchangé)
+        # 🔥 MOTEUR ORIGINAL (IMPORTANT)
         if i == 0:
             start_four = start_time
         else:
             start_four = last_four_end + GAP_FOUR
 
-        # FLUX
         end_four = start_four + four_time
-        start_refroid = end_four
-        end_refroid = start_refroid + refroid
 
+        start_refroid = end_four
+        end_refroid = start_refroid + data["refroid"]
+
+        # 🔥 déco piloté par disponibilité réelle
         start_deco = max(end_refroid, last_deco_end)
 
-        # PAUSE MIDI
+        # 🔥 PAUSE MIDI PRIORITAIRE
         if pause_active and PAUSE_START <= start_deco < PAUSE_END:
             start_deco = PAUSE_END
 
         latence = start_deco - end_refroid
 
-        # 🔥 SECURITE LATENCE (ajout uniquement)
+        # 🔥 CORRECTION LATENCE SANS CASSER LE MOTEUR
         if latence > latence_max:
-            start_deco = end_refroid + latence_max
-            latence = latence_max
 
-        end_deco = start_deco + deco
+            start_deco = end_refroid + latence_max
+
+            # 🔥 RECHECK MIDI (très important)
+            if pause_active and PAUSE_START <= start_deco < PAUSE_END:
+                start_deco = PAUSE_END
+
+            latence = start_deco - end_refroid
+
+        end_deco = start_deco + data["deco"]
 
         if end_deco > END_TIME:
             break
@@ -158,7 +156,7 @@ def build_gantt(df):
 
 with tab1:
 
-    st.title("🔥 Simulation P10")
+    st.title("🔥 Simulation P10 (réel)")
 
     jour = st.selectbox("Jour", ["Lundi", "Autres jours"])
     latence_max = st.slider("Latence max", 0, 10, 10)
@@ -193,6 +191,7 @@ with tab1:
         st.dataframe(df)
 
         st.subheader("📊 Gantt")
+
         gantt_df = build_gantt(df)
 
         fig = px.timeline(
@@ -215,12 +214,12 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
 # =========================
-# TAB 2 : OPTIMISATION (BONUS)
+# TAB 2 : OPTIMISATION (NON INTRUSIVE)
 # =========================
 
 with tab2:
 
-    st.title("🚀 Optimisation (bonus)")
+    st.title("🚀 Optimisation (non intrusive)")
 
     if st.button("Lancer optimisation"):
 
@@ -248,7 +247,7 @@ with tab2:
             score = nb * 100 + taux - lat
 
             results.append({
-                "Offset (min)": offset,
+                "Offset": offset,
                 "Production": nb,
                 "Taux four (%)": round(taux, 1),
                 "Latence moy": round(lat, 2),
@@ -259,7 +258,7 @@ with tab2:
                 best_score = score
                 best_df = df
 
-        st.subheader("📊 Comparaison scénarios")
+        st.subheader("📊 Comparaison")
         st.dataframe(pd.DataFrame(results))
 
         st.subheader("🏆 Meilleur scénario")
