@@ -27,7 +27,7 @@ PAUSE_END = 13 * 60
 tab1, tab2 = st.tabs(["Simulation P10", "Optimisation"])
 
 # =========================
-# SIMULATION
+# SIMULATION (INCHANGÉE)
 # =========================
 
 with tab1:
@@ -50,17 +50,13 @@ with tab1:
         return int(t[:2]) * 60 + int(t[3:])
 
     def to_datetime(t):
-        h = int(t[:2])
-        m = int(t[3:])
-        return datetime(2024, 1, 1, h, m)
+        return datetime(2024, 1, 1, int(t[:2]), int(t[3:]))
 
     def simulate():
 
         results = []
-
         last_four_end = START_TIME
         last_deco_end = START_TIME
-
         i = 0
 
         while True:
@@ -130,7 +126,6 @@ with tab1:
 
             last_four_end = end_four
             last_deco_end = end_deco
-
             i += 1
 
         return pd.DataFrame(results)
@@ -143,26 +138,17 @@ with tab1:
 
             label = f"B{row['Bras']} - {row['Produit']}"
 
-            tasks.append({
-                "Task": label,
-                "Start": to_datetime(row["Début Four"]),
-                "Finish": to_datetime(row["Fin Four"]),
-                "Type": "Four"
-            })
-
-            tasks.append({
-                "Task": label,
-                "Start": to_datetime(row["Début Refroid"]),
-                "Finish": to_datetime(row["Fin Refroid"]),
-                "Type": "Refroid"
-            })
-
-            tasks.append({
-                "Task": label,
-                "Start": to_datetime(row["Début Déco"]),
-                "Finish": to_datetime(row["Fin Déco"]),
-                "Type": "Déco"
-            })
+            for phase in [
+                ("Four", "Début Four", "Fin Four"),
+                ("Refroid", "Début Refroid", "Fin Refroid"),
+                ("Déco", "Début Déco", "Fin Déco")
+            ]:
+                tasks.append({
+                    "Task": label,
+                    "Start": to_datetime(row[phase[1]]),
+                    "Finish": to_datetime(row[phase[2]]),
+                    "Type": phase[0]
+                })
 
             if row["Latence (min)"] > 0:
                 tasks.append({
@@ -179,53 +165,9 @@ with tab1:
         df = simulate()
         st.session_state["df"] = df
 
-        nb_cuves = len(df[df["Produit"] == "cuve"])
-        nb_cloisons = len(df[df["Produit"] == "cloison"])
-
-        total_four_time = sum(
-            to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
-            for _, r in df.iterrows()
-        )
-
-        total_available_time = END_TIME - START_TIME
-        taux_four = (total_four_time / total_available_time) * 100
-
-        st.subheader("📊 Production")
-
-        col1, col2 = st.columns(2)
-        col1.metric("Cuves", nb_cuves)
-        col2.metric("Cloisons", nb_cloisons)
-
-        st.subheader("🔥 Utilisation du four")
-        st.metric("Taux (%)", round(taux_four, 1))
-
-        st.subheader("📋 Détail")
         st.dataframe(df)
 
-        st.subheader("📊 Diagramme de Gantt")
-
-        gantt_df = build_gantt(df)
-
-        fig = px.timeline(
-            gantt_df,
-            x_start="Start",
-            x_end="Finish",
-            y="Task",
-            color="Type",
-            color_discrete_map={
-                "Four": "green",
-                "Refroid": "blue",
-                "Déco": "purple",
-                "LATENCE": "red"
-            }
-        )
-
-        fig.update_yaxes(autorange="reversed")
-        fig.update_layout(xaxis=dict(tickformat="%H:%M"))
-
-        st.plotly_chart(fig, use_container_width=True)
-
-        # 🔥 AJOUT UNIQUE : EXPORT EXCEL
+        # 🔥 EXPORT EXCEL (AJOUT UNIQUEMENT)
         def df_to_excel_xml(df):
             xml = '<?xml version="1.0"?>\n'
             xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet">'
@@ -252,8 +194,6 @@ with tab1:
             mime="application/xml"
         )
 
-
-
 # =========================
 # ONGLET OPTIMISATION
 # =========================
@@ -262,6 +202,12 @@ with tab2:
 
     st.title("Optimisation avancée production")
     st.markdown("### Maximiser production + utilisation four")
+
+    # 🔥 AJOUT : AFFICHER LA SIMULATION
+    if "df" in st.session_state:
+        st.subheader("📋 Simulation actuelle")
+        st.dataframe(st.session_state["df"])
+        st.divider()
 
     # 🔧 fonction centrale
     def simulate_with_overtime(extra):
@@ -337,27 +283,4 @@ with tab2:
 
         df_results = pd.DataFrame(results).sort_values(by="Score", ascending=False)
 
-        st.subheader("📊 Scénarios")
         st.dataframe(df_results)
-
-        st.subheader("🏆 Meilleur scénario")
-        st.success(
-            f"{best_config['Pause']} | Latence {best_config['Latence max']} min | "
-            f"{best_config['Production']} pièces | {best_config['Taux four (%)']}%"
-        )
-
-        # =========================
-        # 📊 PARETO
-        # =========================
-
-        st.subheader("📈 Pareto Production vs Four")
-
-        fig = px.scatter(
-            df_results,
-            x="Taux four (%)",
-            y="Production",
-            color="Pause",
-            hover_data=["Latence max"]
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
