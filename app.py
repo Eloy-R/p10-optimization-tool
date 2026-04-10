@@ -98,18 +98,18 @@ def simulate():
             break
 
         # =====================
-        # REFROID
+        # REFROID (immédiat)
         # =====================
-        start_refroid = end_four + TRANSITION
+        start_refroid = end_four
         end_refroid = start_refroid + data["refroid"]
 
         # =====================
         # DECO
         # =====================
-        start_deco = max(end_refroid + TRANSITION, last_deco_end)
+        start_deco = max(end_refroid, last_deco_end)
         end_deco = start_deco + data["deco"]
 
-        latence = start_deco - (end_refroid + TRANSITION)
+        latence = start_deco - end_refroid
 
         if end_deco > END_TIME:
             break
