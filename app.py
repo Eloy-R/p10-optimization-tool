@@ -354,24 +354,23 @@ with tab2:
                     f"+{df_ot.iloc[i]['Production'] - df_ot.iloc[i-1]['Production']} pièce(s)"
                 )
 
-        # =========================
-        # 🎯 SEUIL CRITIQUE
-        # =========================
 
-        st.subheader("🎯 Seuil pour produire une pièce en plus")
+    # =========================
+# 🎯 SEUIL UNIQUE ============
+# =========================
 
-        base_prod = len(simulate())
+base_prod = df_ot.iloc[0]["Production"]
 
-        seuil = next(
-            (extra for extra in range(1, 121)
-             if len(simulate_with_overtime(extra)) > base_prod),
-            None
-        )
+seuil = next(
+    (extra for extra in range(1, 121)
+     if len(simulate_with_overtime(extra)) > base_prod),
+    None
+)
 
-        if seuil:
-            st.success(f"👉 +{seuil} min → +1 pièce")
-        else:
-            st.warning("👉 Pas de gain même avec +2h")
+if seuil:
+    st.info(f"👉 +{seuil} min → +1 pièce")
+else:
+    st.warning("👉 Pas de gain même avec +2h")
 
         # =========================
         # ⏱️ DERNIÈRE PIÈCE
