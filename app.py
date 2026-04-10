@@ -14,18 +14,17 @@ BRAS_SEQUENCE = [4, 1, 2, 3]
 
 END_TIME = 21 * 60 + 45
 
-GAP_FOUR = 1  # 🔥 1 min entre fin four et début suivant
+GAP_FOUR = 1  # 1 min minimum entre cycles
 
 
 # =========================
 # UI
 # =========================
 
-st.title("🔥 Simulateur P10 - Version finale validée")
+st.title("🔥 Simulateur P10 - Version terrain final")
 
 jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
 
-# 🔥 horaires + décalage initial du four (+2 min)
 if jour == "Lundi":
     START_TIME = 6 * 60 + 25
 else:
@@ -63,8 +62,8 @@ def simulate():
         bras = BRAS_SEQUENCE[i % 4]
         data = PRODUITS[produit]
 
-        # Temps four (réel, sans +2)
-        four_time = data["four"]
+        # Temps four de base
+        base_four_time = data["four"]
 
         # =====================
         # CALCUL OPTIMAL
@@ -73,7 +72,7 @@ def simulate():
         target_start_deco = last_deco_end
         target_end_refroid = target_start_deco
         target_end_four = target_end_refroid - data["refroid"]
-        target_start_four = target_end_four - four_time
+        target_start_four = target_end_four - base_four_time
 
         # =====================
         # CONTRAINTE FOUR
@@ -85,13 +84,27 @@ def simulate():
             min_start_four = last_four_end + GAP_FOUR
             start_four = max(target_start_four, min_start_four)
 
+        # =====================
+        # 🔥 REGLE +2 MIN (clé)
+        # =====================
+
+        if i > 0:
+            ecart = start_four - last_four_end
+
+            if ecart > 2:
+                four_time = base_four_time + 2
+            else:
+                four_time = base_four_time
+        else:
+            four_time = base_four_time
+
         end_four = start_four + four_time
 
         if end_four > END_TIME:
             break
 
         # =====================
-        # REFROID (immédiat)
+        # REFROID
         # =====================
         start_refroid = end_four
         end_refroid = start_refroid + data["refroid"]
@@ -151,10 +164,6 @@ if st.button("Lancer la simulation"):
 
     latence_moy = df["Latence (min)"].mean()
     latence_max = df["Latence (min)"].max()
-
-    # =========================
-    # AFFICHAGE
-    # =========================
 
     st.subheader("📊 Performance")
 
