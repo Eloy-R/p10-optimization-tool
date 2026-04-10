@@ -392,270 +392,177 @@ with tab2:
 
 with tab3:
 
-    st.title("📊 Analyse industrielle P10")
-
-    st.markdown("### 🔍 Analyse basée sur le dernier scénario simulé")
+    st.title("🧠 Analyse & Aide à la décision P10")
 
     try:
-        df  # vérifie si df existe
+        df
     except:
-        st.warning("👉 Lance d'abord une simulation dans l'onglet Simulation P10")
+        st.warning("👉 Lance une simulation d'abord")
         st.stop()
 
     # =========================
-    # KPI DE BASE
+    # 📊 1. VUE GLOBALE
     # =========================
+
+    st.subheader("📊 Vue globale")
 
     lat_moy = df["Latence (min)"].mean()
     lat_max = df["Latence (min)"].max()
 
     total_prod = len(df)
 
-    st.subheader("📊 Vue globale")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Production totale", total_prod)
-    col2.metric("Latence moyenne", round(lat_moy, 2))
-    col3.metric("Latence max", round(lat_max, 2))
-
-    # =========================
-    # GOULET D'ÉTRANGLEMENT
-    # =========================
-
-    st.subheader("🔥 Détection du goulet")
-
-    total_deco_time = sum(
-        to_minutes(r["Fin Déco"]) - to_minutes(r["Début Déco"])
-        for _, r in df.iterrows()
-    )
-
     total_four_time = sum(
         to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
         for _, r in df.iterrows()
     )
 
-    if total_deco_time > total_four_time:
-        st.error("👉 Goulet principal : DÉCOFFRAGE saturé")
-    else:
-        st.success("👉 Goulet principal : FOUR")
+    taux_four = (total_four_time / (END_TIME - START_TIME)) * 100
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Production", total_prod)
+    col2.metric("Latence moy", round(lat_moy, 2))
+    col3.metric("Utilisation four (%)", round(taux_four, 1))
 
     # =========================
-    # ANALYSE LATENCE
+    # 🔍 2. DIAGNOSTIC
     # =========================
 
-    st.subheader("⏳ Analyse de la latence")
+    st.subheader("🔍 Diagnostic")
 
-    df_lat = df[df["Latence (min)"] > 0]
+    problems = []
+    reco = []
 
-    if not df_lat.empty:
-        st.write(f"👉 {len(df_lat)} cycles avec latence")
+    if lat_moy > 5:
+        problems.append("Latence élevée → déco saturé")
+        reco.append("Réduire latence ou décaler entrée four")
 
-        st.dataframe(df_lat[["Bras", "Produit", "Latence (min)"]])
+    if taux_four < 65:
+        problems.append("Four sous-utilisé")
+        reco.append("Augmenter cadence four")
 
-        st.warning("👉 La latence se crée lorsque le déco n'est pas disponible")
-    else:
-        st.success("👉 Aucune latence détectée")
+    if taux_four > 80:
+        problems.append("Four surchargé")
+        reco.append("Risque saturation déco")
 
-    # =========================
-    # SATURATION DÉCO
-    # =========================
-
-    st.subheader("⚠️ Saturation du décoffrage")
-
-    deco_gaps = []
-
-    for i in range(1, len(df)):
-        prev_end = to_minutes(df.iloc[i-1]["Fin Déco"])
-        curr_start = to_minutes(df.iloc[i]["Début Déco"])
-
-        gap = curr_start - prev_end
-        deco_gaps.append(gap)
-
-    avg_gap = sum(deco_gaps) / len(deco_gaps)
-
-    if avg_gap < 5:
-        st.error("👉 Déco quasi saturé (peu de respiration)")
-    elif avg_gap < 15:
-        st.warning("👉 Déco chargé")
-    else:
-        st.success("👉 Déco fluide")
-
-    # =========================
-    # IMPACT PAUSE MIDI
-    # =========================
-
-    st.subheader("🕛 Impact pause midi")
-
-    midi_block = df[
+    impacted = df[
         df["Début Déco"].apply(lambda t: 12 <= int(t[:2]) < 13)
     ]
 
-    if not midi_block.empty:
-        st.warning("👉 Des cycles sont impactés par la pause midi")
-    else:
-        st.success("👉 Aucun impact visible de la pause midi")
+    if len(impacted) > 0:
+        problems.append("Pause midi mal positionnée")
+        reco.append("Tester pause à 11h30 ou 12h30")
+
+    st.write("### 🚨 Problèmes")
+    for p in problems:
+        st.error(p)
+
+    st.write("### 🚀 Recommandations")
+    for r in reco:
+        st.info(r)
 
     # =========================
-    # TEMPS MORTS
+    # 🔄 3. AVANT / APRES
     # =========================
 
-    st.subheader("🧊 Temps morts / pertes")
+    st.subheader("🔄 Simulation avant / après")
 
-    idle_times = []
+    if st.button("Tester amélioration automatique"):
 
-    for i in range(1, len(df)):
-        prev_end = to_minutes(df.iloc[i-1]["Fin Refroid"])
-        curr_start = to_minutes(df.iloc[i]["Début Déco"])
+        # test simple : latence 10 vs latence 5
+        lat_orig = latence_max
 
-        idle = curr_start - prev_end
+        globals()["latence_max"] = 5
+        df_new = simulate()
+        globals()["latence_max"] = lat_orig
 
-        if idle > 0:
-            idle_times.append(idle)
+        prod_old = len(df)
+        prod_new = len(df_new)
 
-    if idle_times:
-        avg_idle = sum(idle_times) / len(idle_times)
-        st.write(f"👉 Temps mort moyen : {round(avg_idle,1)} min")
+        st.write(f"Avant : {prod_old} pièces")
+        st.write(f"Après : {prod_new} pièces")
 
-        if avg_idle > 10:
-            st.error("👉 Pertes importantes détectées")
+        if prod_new > prod_old:
+            st.success(f"👉 Gain de {prod_new - prod_old} pièces")
         else:
-            st.success("👉 Temps morts maîtrisés")
-    else:
-        st.success("👉 Aucun temps mort")
+            st.warning("👉 Pas d'amélioration")
+
+        st.dataframe(df_new)
 
     # =========================
-    # MIX OPTIMAL ANNUEL 
+    # 🧠 4. MIX ANNUEL EXPERT
     # =========================
 
-    st.subheader("Optimisation mix annuel V:Cuve et C: Cloison")
+    st.subheader("🧠 Mix annuel optimal")
 
     configs = {
         "CCVV": ["cloison", "cloison", "cuve", "cuve"],
         "CVVC": ["cuve", "cloison", "cloison", "cuve"],
         "CVCV": ["cuve", "cloison", "cuve", "cloison"],
         "VVCC": ["cuve", "cuve", "cloison", "cloison"],
-        "CVCV2": ["cloison", "cuve", "cloison", "cuve"],
+        "Alt": ["cloison", "cuve", "cloison", "cuve"],
     }
 
-    pauses = [
-        (False, None),   # pas de pause
-        (True, (12*60, 12*60+30)),
-        (True, (12*60, 13*60)),
-    ]
-
-    latences = range(0, 11)
-
-    annual_results = []
+    results_mix = []
 
     for name, pattern in configs.items():
 
-        performances = []
+        count = 0
 
-        for pause_active_val, pause_window in pauses:
+        last_four_end = START_TIME
+        last_deco_end = START_TIME
 
-            for lat in latences:
+        i = 0
 
-                # backup
-                pause_start_orig = PAUSE_START
-                pause_end_orig = PAUSE_END
-                lat_orig = latence_max
+        while True:
 
-                # inject
-                if pause_active_val:
-                    globals()["PAUSE_START"] = pause_window[0]
-                    globals()["PAUSE_END"] = pause_window[1]
-                else:
-                    globals()["PAUSE_START"] = 0
-                    globals()["PAUSE_END"] = 0
+            produit = pattern[i % 4]
+            data = PRODUITS[produit]
 
-                globals()["latence_max"] = lat
+            four_time = data["four"] + 2 if i < 4 else data["four"]
 
-                # 🔁 simulation mix
-                results_alt = []
-                last_four_end = START_TIME
-                last_deco_end = START_TIME
-                i = 0
+            start_four = START_TIME if i == 0 else last_four_end + GAP_FOUR
 
-                while True:
+            end_four = start_four + four_time
+            start_refroid = end_four
+            end_refroid = start_refroid + data["refroid"]
 
-                    produit = pattern[i % 4]
-                    data = PRODUITS[produit]
+            start_deco = max(end_refroid, last_deco_end)
 
-                    four_time = data["four"] + 2 if i < 4 else data["four"]
+            if PAUSE_START <= start_deco < PAUSE_END:
+                start_deco = PAUSE_END
 
-                    start_four = START_TIME if i == 0 else last_four_end + GAP_FOUR
+            latence = start_deco - end_refroid
 
-                    end_four = start_four + four_time
-                    start_refroid = end_four
-                    end_refroid = start_refroid + data["refroid"]
+            if latence > latence_max:
+                shift = latence - latence_max
 
-                    start_deco = max(end_refroid, last_deco_end)
+                start_four += shift
+                end_four += shift
+                start_refroid += shift
+                end_refroid += shift
 
-                    if PAUSE_START <= start_deco < PAUSE_END:
-                        start_deco = PAUSE_END
+                start_deco = max(end_refroid, last_deco_end)
 
-                    latence = start_deco - end_refroid
+            end_deco = start_deco + data["deco"]
 
-                    if latence > lat:
-                        shift = latence - lat
+            if end_deco > END_TIME:
+                break
 
-                        start_four += shift
-                        end_four += shift
-                        start_refroid += shift
-                        end_refroid += shift
+            count += 1
 
-                        start_deco = max(end_refroid, last_deco_end)
+            last_four_end = end_four
+            last_deco_end = end_deco
+            i += 1
 
-                        if PAUSE_START <= start_deco < PAUSE_END:
-                            start_deco = PAUSE_END
-
-                    end_deco = start_deco + data["deco"]
-
-                    if end_deco > END_TIME:
-                        break
-
-                    results_alt.append(1)
-
-                    last_four_end = end_four
-                    last_deco_end = end_deco
-                    i += 1
-
-                # restore
-                globals()["PAUSE_START"] = pause_start_orig
-                globals()["PAUSE_END"] = pause_end_orig
-                globals()["latence_max"] = lat_orig
-
-                performances.append(len(results_alt))
-
-        if len(performances) == 0:
-            continue
-
-        annual_results.append({
-            "Configuration": name,
-            "Production moyenne": round(sum(performances)/len(performances), 1),
-            "Production min": min(performances),
-            "Production max": max(performances),
-            "Variabilité": max(performances) - min(performances)
+        results_mix.append({
+            "Config": name,
+            "Production": count
         })
 
-    df_annual = pd.DataFrame(annual_results)
+    df_mix = pd.DataFrame(results_mix).sort_values(by="Production", ascending=False)
 
-    st.dataframe(df_annual.sort_values(by="Production moyenne", ascending=False))
+    st.dataframe(df_mix)
 
-    # 🏆 choix robuste
-    best = df_annual.sort_values(
-        by=["Production moyenne", "Production min"],
-        ascending=False
-    ).iloc[0]
+    best = df_mix.iloc[0]
 
-    st.success(
-        f"""
-        🏆 Mix recommandé (annuel) : {best['Configuration']}
-        
-        ✔ Production moyenne : {best['Production moyenne']}
-        ✔ Pire cas : {best['Production min']}
-        ✔ Variabilité : {best['Variabilité']}
-        
-        👉 Recommandé pour changement saisonnier (été/hiver)
-        """
-    )
+    st.success(f"🏆 Mix recommandé : {best['Config']} → {best['Production']} pièces")
