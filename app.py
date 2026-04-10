@@ -230,6 +230,69 @@ with tab1:
 
 with tab2:
 
-    st.title("🚀 Optimisation")
+    st.title("🚀 Optimisation production")
 
-    st.info("👉 À construire ensemble : optimisation automatique du planning")
+    st.markdown("### 🎯 Objectif : maximiser la production avec contrainte latence ≤ 10 min")
+
+    if st.button("Lancer optimisation"):
+
+        scenarios = [
+            {"nom": "Pas de pause", "pause": False},
+            {"nom": "Pause 30 min", "pause": True, "duree": 30},
+            {"nom": "Pause 1h", "pause": True, "duree": 60},
+        ]
+
+        results = []
+
+        for scen in scenarios:
+
+            # 🔥 on garde ton simulateur tel quel
+            pause_active = scen["pause"]
+
+            df = simulate()
+
+            if df.empty:
+                continue
+
+            # KPI
+            nb_cuves = len(df[df["Produit"] == "cuve"])
+            nb_cloisons = len(df[df["Produit"] == "cloison"])
+            total_prod = nb_cuves + nb_cloisons
+
+            total_four_time = sum(
+                to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+                for _, r in df.iterrows()
+            )
+
+            total_available_time = END_TIME - START_TIME
+            taux_four = (total_four_time / total_available_time) * 100
+
+            # score simple mais efficace
+            score = total_prod * 100 + taux_four
+
+            results.append({
+                "Scénario": scen["nom"],
+                "Cuves": nb_cuves,
+                "Cloisons": nb_cloisons,
+                "Total": total_prod,
+                "Utilisation four (%)": round(taux_four, 1),
+                "Score": round(score, 1)
+            })
+
+        df_results = pd.DataFrame(results)
+
+        # tri par score
+        df_results = df_results.sort_values(by="Score", ascending=False)
+
+        st.subheader("📊 Comparaison des scénarios")
+        st.dataframe(df_results)
+
+        # meilleur scénario
+        best = df_results.iloc[0]
+
+        st.subheader("🏆 Meilleur scénario")
+
+        st.success(
+            f"{best['Scénario']} → {int(best['Total'])} pièces | "
+            f"{best['Utilisation four (%)']}% utilisation four"
+        )
