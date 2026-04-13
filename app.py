@@ -281,3 +281,281 @@ with tab1:
         fig.update_layout(xaxis=dict(tickformat="%H:%M"))
 
         st.plotly_chart(fig, use_container_width=True)
+
+
+#=======================
+# Optimisation
+#========================
+with tab2:
+
+    st.title("Optimisation avancée production")
+    st.markdown("### Maximiser production + utilisation four")
+
+    # =========================
+    # 📋 SIMULATION ACTUELLE
+    # =========================
+
+    if "df" in st.session_state:
+        st.subheader("📋 Simulation actuelle")
+        st.dataframe(st.session_state["df"])
+        st.divider()
+
+    # =========================
+    # 🔧 FONCTION
+    # =========================
+
+    def simulate_with_overtime(extra):
+        original_end = END_TIME
+        globals()["END_TIME"] = original_end + extra
+
+        df = simulate()
+
+        globals()["END_TIME"] = original_end
+        return df
+
+    if st.button("Lancer optimisation avancée"):
+
+        # =========================
+        # 📊 SCENARIOS
+        # =========================
+
+        results = []
+        best_score = -999
+        best_config = None
+
+        pauses = [
+            ("Pas de pause", False, None),
+            ("11:30-12:00", True, (11*60+30, 12*60)),
+            ("12:00-12:30", True, (12*60, 12*60+30)),
+            ("12:30-13:00", True, (12*60+30, 13*60)),
+            ("12:00-13:00", True, (12*60, 13*60)),
+        ]
+
+        for pause_name, pause_active_val, pause_window in pauses:
+            for lat in range(0, 11):
+
+                pause_start_orig = PAUSE_START
+                pause_end_orig = PAUSE_END
+                latence_orig = latence_max
+
+                if pause_active_val:
+                    globals()["PAUSE_START"] = pause_window[0]
+                    globals()["PAUSE_END"] = pause_window[1]
+                else:
+                    globals()["PAUSE_START"] = 0
+                    globals()["PAUSE_END"] = 0
+
+                globals()["latence_max"] = lat
+
+                df = simulate()
+
+                globals()["PAUSE_START"] = pause_start_orig
+                globals()["PAUSE_END"] = pause_end_orig
+                globals()["latence_max"] = latence_orig
+
+                if df.empty:
+                    continue
+
+                total_prod = len(df)
+
+                total_four_time = sum(
+                    to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
+                    for _, r in df.iterrows()
+                )
+
+                taux_four = (total_four_time / (END_TIME - START_TIME)) * 100
+                lat_moy = df["Latence (min)"].mean()
+
+                score = total_prod * 100 + taux_four - lat_moy * 2
+
+                results.append({
+                    "Pause": pause_name,
+                    "Latence max": lat,
+                    "Production": total_prod,
+                    "Taux four (%)": round(taux_four, 1),
+                    "Latence moy": round(lat_moy, 2),
+                    "Score": round(score, 1)
+                })
+
+                if score > best_score:
+                    best_score = score
+                    best_config = results[-1]
+
+        df_results = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+
+        st.subheader("📊 Scénarios")
+        st.dataframe(df_results)
+
+        # =========================
+        # 🏆 MEILLEUR
+        # =========================
+
+        st.subheader("🏆 Meilleur scénario")
+
+        st.success(
+            f"{best_config['Pause']} | Latence {best_config['Latence max']} min | "
+            f"{best_config['Production']} pièces | {best_config['Taux four (%)']}%"
+        )
+
+        # =========================
+        # 📈 PARETO
+        # =========================
+
+        st.subheader("📈 Pareto Production vs Four")
+
+        fig = px.scatter(
+            df_results,
+            x="Taux four (%)",
+            y="Production",
+            color="Pause",
+            hover_data=["Latence max"]
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # =========================
+        # ⏱️ OVERTIME INTELLIGENT (BLOC UNIQUE)
+        # =========================
+
+        st.subheader("⏱️ Overtime intelligent")
+
+        overtime_range = [0, 15, 30, 45, 60]
+
+        results_ot = []
+
+        for extra in overtime_range:
+
+            df_extra = simulate_with_overtime(extra)
+
+            if df_extra.empty:
+                continue
+
+            results_ot.append({
+                "Overtime (min)": extra,
+                "Production": len(df_extra)
+            })
+
+        df_ot = pd.DataFrame(results_ot)
+
+        # 👉 TABLEAU 1
+        st.dataframe(df_ot)
+
+        # 👉 DETECTION GAIN
+        seuil = None
+        gain = 0
+
+        for i in range(1, len(df_ot)):
+            prev = df_ot.iloc[i-1]
+            curr = df_ot.iloc[i]
+
+            if curr["Production"] > prev["Production"]:
+                seuil = curr["Overtime (min)"]
+                gain = curr["Production"] - prev["Production"]
+                break
+
+        # 👉 MESSAGE
+        if seuil:
+            st.info(f"👉 +{seuil} min → +{gain} pièce(s)")
+        else:
+            st.warning("👉 Aucun gain même avec overtime")
+
+        # 👉 TABLEAU 2 + HEURE
+        if seuil:
+
+            df_final = simulate_with_overtime(seuil)
+            last_piece = df_final.iloc[-1]
+
+            st.subheader("📦 Dernière pièce ajoutée")
+
+            st.dataframe(pd.DataFrame([last_piece]))
+
+            st.success(f"⏱️ Fin de production : {last_piece['Fin Déco']}")
+
+        # =========================
+        # 🧠 MIX ANNUEL
+        # =========================
+
+        st.subheader("🧠 Mix annuel optimal (C=cloison, V=cuve)")
+
+        configs = {
+            "CCVV": ["cloison", "cloison", "cuve", "cuve"],
+            "CVVC": ["cuve", "cloison", "cloison", "cuve"],
+            "CVCV": ["cuve", "cloison", "cuve", "cloison"],
+            "VVCC": ["cuve", "cuve", "cloison", "cloison"],
+            "Actuel": ["cloison", "cuve", "cloison", "cuve"],
+        }
+
+        mix_results = []
+
+        for name, pattern in configs.items():
+
+            perf = []
+
+            for lat in range(0, 11):
+
+                lat_orig = latence_max
+                globals()["latence_max"] = lat
+
+                count = 0
+                last_four_end = START_TIME
+                last_deco_end = START_TIME
+                i = 0
+
+                while True:
+
+                    produit = pattern[i % 4]
+                    data = PRODUITS[produit]
+
+                    four_time = data["four"] + 2 if i < 4 else data["four"]
+                    start_four = START_TIME if i == 0 else last_four_end + GAP_FOUR
+
+                    end_four = start_four + four_time
+                    end_refroid = end_four + data["refroid"]
+
+                    start_deco = max(end_refroid, last_deco_end)
+
+                    if PAUSE_START <= start_deco < PAUSE_END:
+                        start_deco = PAUSE_END
+
+                    latence = start_deco - end_refroid
+
+                    if latence > lat:
+                        shift = latence - lat
+                        start_four += shift
+                        end_four += shift
+                        end_refroid += shift
+                        start_deco = max(end_refroid, last_deco_end)
+
+                    end_deco = start_deco + data["deco"]
+
+                    if end_deco > END_TIME:
+                        break
+
+                    count += 1
+                    last_four_end = end_four
+                    last_deco_end = end_deco
+                    i += 1
+
+                globals()["latence_max"] = lat_orig
+                perf.append(count)
+
+            mix_results.append({
+                "Configuration": name,
+                "Moyenne": round(sum(perf)/len(perf), 1),
+                "Min": min(perf),
+                "Max": max(perf),
+                "Variabilité": max(perf) - min(perf)
+            })
+
+        df_mix = pd.DataFrame(mix_results).sort_values(
+            by=["Moyenne", "Min"], ascending=False
+        )
+
+        st.dataframe(df_mix)
+
+        best = df_mix.iloc[0]
+
+        st.success(
+            f"🏆 Mix recommandé : {best['Configuration']} "
+            f"(moy={best['Moyenne']} | min={best['Min']})"
+        )
