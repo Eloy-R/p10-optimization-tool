@@ -180,14 +180,13 @@ with tab1:
 # =========================
 # OPTIMISATION
 # =========================
-
 with tab2:
 
     st.title("Optimisation avancée production")
     st.markdown("### Maximiser production + utilisation four")
 
     # =========================
-    # 📋 AFFICHAGE SIMULATION
+    # 📋 SIMULATION ACTUELLE
     # =========================
 
     if "df" in st.session_state:
@@ -196,7 +195,7 @@ with tab2:
         st.divider()
 
     # =========================
-    # 🔧 FONCTION UNIQUE
+    # 🔧 FONCTION
     # =========================
 
     def simulate_with_overtime(extra):
@@ -206,7 +205,6 @@ with tab2:
         df = simulate()
 
         globals()["END_TIME"] = original_end
-
         return df
 
     if st.button("Lancer optimisation avancée"):
@@ -283,7 +281,7 @@ with tab2:
         st.dataframe(df_results)
 
         # =========================
-        # 🏆 MEILLEUR SCENARIO
+        # 🏆 MEILLEUR
         # =========================
 
         st.subheader("🏆 Meilleur scénario")
@@ -310,7 +308,7 @@ with tab2:
         st.plotly_chart(fig, use_container_width=True)
 
         # =========================
-        # ⏱️ OVERTIME
+        # ⏱️ OVERTIME INTELLIGENT (BLOC UNIQUE)
         # =========================
 
         st.subheader("⏱️ Overtime intelligent")
@@ -321,64 +319,51 @@ with tab2:
 
         for extra in overtime_range:
 
-            df = simulate_with_overtime(extra)
+            df_extra = simulate_with_overtime(extra)
 
-            if df.empty:
+            if df_extra.empty:
                 continue
 
             results_ot.append({
                 "Overtime (min)": extra,
-                "Production": len(df)
+                "Production": len(df_extra)
             })
 
         df_ot = pd.DataFrame(results_ot)
 
+        # 👉 TABLEAU 1
         st.dataframe(df_ot)
 
-        # =========================
-        # 🎯 SEUIL UNIQUE
-        # =========================
-
-        st.subheader("🎯 Seuil pour produire une pièce en plus")
-
-        base_prod = df_ot.iloc[0]["Production"]
-
-        seuil = next(
-            (extra for extra in range(1, 121)
-             if len(simulate_with_overtime(extra)) > base_prod),
-            None
-        )
-
-        if seuil:
-            st.info(f"👉 +{seuil} min → +1 pièce")
-        else:
-            st.warning("👉 Pas de gain même avec +2h")
-
-        # =========================
-        # 💡 GAINS
-        # =========================
+        # 👉 DETECTION GAIN
+        seuil = None
+        gain = 0
 
         for i in range(1, len(df_ot)):
+            prev = df_ot.iloc[i-1]
+            curr = df_ot.iloc[i]
 
-            if df_ot.iloc[i]["Production"] > df_ot.iloc[i-1]["Production"]:
-                gain = df_ot.iloc[i]["Production"] - df_ot.iloc[i-1]["Production"]
-                seuil_gain = df_ot.iloc[i]["Overtime (min)"]
-
-                st.info(f"👉 +{seuil_gain} min → +{gain} pièce(s)")
+            if curr["Production"] > prev["Production"]:
+                seuil = curr["Overtime (min)"]
+                gain = curr["Production"] - prev["Production"]
                 break
 
-        # =========================
-        # ⏱️ DERNIÈRE PIÈCE
-        # =========================
+        # 👉 MESSAGE
+        if seuil:
+            st.info(f"👉 +{seuil} min → +{gain} pièce(s)")
+        else:
+            st.warning("👉 Aucun gain même avec overtime")
 
+        # 👉 TABLEAU 2 + HEURE
         if seuil:
 
             df_final = simulate_with_overtime(seuil)
             last_piece = df_final.iloc[-1]
 
-            st.subheader("⏱️ Dernière pièce ajoutée")
+            st.subheader("📦 Dernière pièce ajoutée")
+
             st.dataframe(pd.DataFrame([last_piece]))
-            st.info(f"👉 Fin à {last_piece['Fin Déco']}")
+
+            st.success(f"⏱️ Fin de production : {last_piece['Fin Déco']}")
 
         # =========================
         # 🧠 MIX ANNUEL
