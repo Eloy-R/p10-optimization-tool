@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+
 # =========================
 # PARAMETRES
 # =========================
@@ -20,12 +21,6 @@ PAUSE_START = 12 * 60
 PAUSE_END = 13 * 60
 
 # =========================
-# TABS
-# =========================
-
-tab1, tab2 = st.tabs(["Simulation P10", "Optimisation"])
-
-# =========================
 # OUTILS
 # =========================
 
@@ -39,51 +34,30 @@ def to_datetime(t):
     return datetime(2024, 1, 1, int(t[:2]), int(t[3:]))
 
 # =========================
+# TABS
+# =========================
+
+tab1, tab2 = st.tabs(["Simulation P10", "Optimisation"])
+
+# =========================
 # SIMULATION
 # =========================
+
 with tab1:
 
-    st.title("Simulateur P10 - Production")
-
-    # =========================
-    # UI
-    # =========================
+    st.title("🔥 Simulateur P10 - Mode réel")
 
     jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
     latence_max = st.slider("Latence max (min)", 0, 10, 10)
     pause_active = st.checkbox("Activer pause midi (12h-13h)", True)
 
-    if jour == "Lundi":
-        START_TIME = 6 * 60 + 25
-    else:
-        START_TIME = 4 * 60 + 52
-
-    # =========================
-    # OUTILS
-    # =========================
-
-    def format_time(m):
-        return f"{int(m//60):02d}:{int(m%60):02d}"
-
-    def to_minutes(t):
-        return int(t[:2]) * 60 + int(t[3:])
-
-    def to_datetime(t):
-        h = int(t[:2])
-        m = int(t[3:])
-        return datetime(2024, 1, 1, h, m)
-
-    # =========================
-    # SIMULATION
-    # =========================
+    START_TIME = 6 * 60 + 25 if jour == "Lundi" else 4 * 60 + 52
 
     def simulate():
 
         results = []
-
         last_four_end = START_TIME
         last_deco_end = START_TIME
-
         i = 0
 
         while True:
@@ -92,64 +66,50 @@ with tab1:
             bras = BRAS_SEQUENCE[i % 4]
             data = PRODUITS[produit]
 
-            base_four = data["four"]
-            refroid = data["refroid"]
-            deco = data["deco"]
+            four_time = data["four"] + 2 if i < 4 else data["four"]
 
-            # +2 min sur les 4 premiers cycles
-            if i < 4:
-                four_time = base_four + 2
-            else:
-                four_time = base_four
+            start_four = START_TIME if i == 0 else last_four_end + GAP_FOUR
 
-            # MODE REEL
-            if i == 0:
-                start_four = START_TIME
-            else:
-                start_four = last_four_end + GAP_FOUR
-
-            # FLUX
             end_four = start_four + four_time
-            start_refroid = end_four
-            end_refroid = start_refroid + refroid
+            end_refroid = end_four + data["refroid"]
 
             start_deco = max(end_refroid, last_deco_end)
 
-            # PAUSE MIDI
-            
+            # ===== PAUSE MIDI =====
             if pause_active:
+                end_temp = start_deco + data["deco"]
 
-                end_deco_temp = start_deco + deco
+                if PAUSE_START <= start_deco < PAUSE_END:
+                    start_deco = PAUSE_END
 
-            # CAS 1 : démarre dans la pause
-            if PAUSE_START <= start_deco < PAUSE_END:
-                start_deco = PAUSE_END
-        
-            # CAS 2 : chevauche la pause
-            elif start_deco < PAUSE_START and end_deco_temp > PAUSE_START:
-                start_deco = PAUSE_END
-        
-                    latence = start_deco - end_refroid
+                elif start_deco < PAUSE_START and end_temp > PAUSE_START:
+                    start_deco = PAUSE_END
 
-            # CONTRAINTE LATENCE
+            latence = start_deco - end_refroid
+
+            # ===== CONTRAINTE LATENCE =====
             if latence > latence_max:
 
-                retard = latence - latence_max
+                shift = latence - latence_max
 
-                start_four += retard
-                end_four += retard
-                start_refroid += retard
-                end_refroid += retard
+                start_four += shift
+                end_four += shift
+                end_refroid += shift
 
                 start_deco = max(end_refroid, last_deco_end)
 
                 if pause_active:
+                    end_temp = start_deco + data["deco"]
+
                     if PAUSE_START <= start_deco < PAUSE_END:
+                        start_deco = PAUSE_END
+
+                    elif start_deco < PAUSE_START and end_temp > PAUSE_START:
                         start_deco = PAUSE_END
 
                 latence = start_deco - end_refroid
 
-            end_deco = start_deco + deco
+            end_deco = start_deco + data["deco"]
 
             if end_deco > END_TIME:
                 break
@@ -159,7 +119,7 @@ with tab1:
                 "Produit": produit,
                 "Début Four": format_time(start_four),
                 "Fin Four": format_time(end_four),
-                "Début Refroid": format_time(start_refroid),
+                "Début Refroid": format_time(end_four),
                 "Fin Refroid": format_time(end_refroid),
                 "Début Déco": format_time(start_deco),
                 "Fin Déco": format_time(end_deco),
@@ -168,14 +128,9 @@ with tab1:
 
             last_four_end = end_four
             last_deco_end = end_deco
-
             i += 1
 
         return pd.DataFrame(results)
-
-    # =========================
-    # GANTT
-    # =========================
 
     def build_gantt(df):
 
@@ -185,26 +140,17 @@ with tab1:
 
             label = f"B{row['Bras']} - {row['Produit']}"
 
-            tasks.append({
-                "Task": label,
-                "Start": to_datetime(row["Début Four"]),
-                "Finish": to_datetime(row["Fin Four"]),
-                "Type": "Four"
-            })
-
-            tasks.append({
-                "Task": label,
-                "Start": to_datetime(row["Début Refroid"]),
-                "Finish": to_datetime(row["Fin Refroid"]),
-                "Type": "Refroid"
-            })
-
-            tasks.append({
-                "Task": label,
-                "Start": to_datetime(row["Début Déco"]),
-                "Finish": to_datetime(row["Fin Déco"]),
-                "Type": "Déco"
-            })
+            for phase in [
+                ("Four", "Début Four", "Fin Four"),
+                ("Refroid", "Début Refroid", "Fin Refroid"),
+                ("Déco", "Début Déco", "Fin Déco")
+            ]:
+                tasks.append({
+                    "Task": label,
+                    "Start": to_datetime(row[phase[1]]),
+                    "Finish": to_datetime(row[phase[2]]),
+                    "Type": phase[0]
+                })
 
             if row["Latence (min)"] > 0:
                 tasks.append({
@@ -216,18 +162,11 @@ with tab1:
 
         return pd.DataFrame(tasks)
 
-    # =========================
-    # EXECUTION
-    # =========================
-
     if st.button("Lancer la simulation"):
 
         df = simulate()
-
-        # 👉 IMPORTANT pour tab2
         st.session_state["df"] = df
 
-        # KPI
         nb_cuves = len(df[df["Produit"] == "cuve"])
         nb_cloisons = len(df[df["Produit"] == "cloison"])
 
@@ -236,320 +175,71 @@ with tab1:
             for _, r in df.iterrows()
         )
 
-        total_available_time = END_TIME - START_TIME
-        taux_four = (total_four_time / total_available_time) * 100
+        taux_four = (total_four_time / (END_TIME - START_TIME)) * 100
 
-        # KPI AFFICHAGE
-        st.subheader("📊 Production")
+        st.metric("Cuves", nb_cuves)
+        st.metric("Cloisons", nb_cloisons)
+        st.metric("Taux four (%)", round(taux_four, 1))
 
-        col1, col2 = st.columns(2)
-        col1.metric("Cuves", nb_cuves)
-        col2.metric("Cloisons", nb_cloisons)
-
-        st.subheader("🔥 Utilisation du four")
-        st.metric("Taux (%)", round(taux_four, 1))
-
-        # TABLEAU
-        st.subheader("📋 Détail")
         st.dataframe(df)
 
-        # GANTT
-        st.subheader("📊 Diagramme de Gantt")
-
-        gantt_df = build_gantt(df)
-
         fig = px.timeline(
-            gantt_df,
+            build_gantt(df),
             x_start="Start",
             x_end="Finish",
             y="Task",
-            color="Type",
-            color_discrete_map={
-                "Four": "green",
-                "Refroid": "blue",
-                "Déco": "purple",
-                "LATENCE": "red"
-            }
+            color="Type"
         )
 
         fig.update_yaxes(autorange="reversed")
-        fig.update_layout(xaxis=dict(tickformat="%H:%M"))
-
         st.plotly_chart(fig, use_container_width=True)
 
 # =========================
 # OPTIMISATION
 # =========================
+
 with tab2:
 
-    st.title("Optimisation avancée production")
-    st.markdown("### Maximiser production + utilisation four")
-
-    # =========================
-    # 📋 SIMULATION ACTUELLE
-    # =========================
+    st.title("🚀 Optimisation avancée")
 
     if "df" in st.session_state:
-        st.subheader("📋 Simulation actuelle")
+        st.subheader("Simulation actuelle")
         st.dataframe(st.session_state["df"])
-        st.divider()
-
-    # =========================
-    # 🔧 FONCTION
-    # =========================
 
     def simulate_with_overtime(extra):
-        original_end = END_TIME
-        globals()["END_TIME"] = original_end + extra
-
+        original = END_TIME
+        globals()["END_TIME"] = original + extra
         df = simulate()
-
-        globals()["END_TIME"] = original_end
+        globals()["END_TIME"] = original
         return df
 
-    if st.button("Lancer optimisation avancée"):
-
-        # =========================
-        # 📊 SCENARIOS
-        # =========================
-
-        results = []
-        best_score = -999
-        best_config = None
-
-        pauses = [
-            ("Pas de pause", False, None),
-            ("11:30-12:00", True, (11*60+30, 12*60)),
-            ("12:00-12:30", True, (12*60, 12*60+30)),
-            ("12:30-13:00", True, (12*60+30, 13*60)),
-            ("12:00-13:00", True, (12*60, 13*60)),
-        ]
-
-        for pause_name, pause_active_val, pause_window in pauses:
-            for lat in range(0, 11):
-
-                pause_start_orig = PAUSE_START
-                pause_end_orig = PAUSE_END
-                latence_orig = latence_max
-
-                if pause_active_val:
-                    globals()["PAUSE_START"] = pause_window[0]
-                    globals()["PAUSE_END"] = pause_window[1]
-                else:
-                    globals()["PAUSE_START"] = 0
-                    globals()["PAUSE_END"] = 0
-
-                globals()["latence_max"] = lat
-
-                df = simulate()
-
-                globals()["PAUSE_START"] = pause_start_orig
-                globals()["PAUSE_END"] = pause_end_orig
-                globals()["latence_max"] = latence_orig
-
-                if df.empty:
-                    continue
-
-                total_prod = len(df)
-
-                total_four_time = sum(
-                    to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
-                    for _, r in df.iterrows()
-                )
-
-                taux_four = (total_four_time / (END_TIME - START_TIME)) * 100
-                lat_moy = df["Latence (min)"].mean()
-
-                score = total_prod * 100 + taux_four - lat_moy * 2
-
-                results.append({
-                    "Pause": pause_name,
-                    "Latence max": lat,
-                    "Production": total_prod,
-                    "Taux four (%)": round(taux_four, 1),
-                    "Latence moy": round(lat_moy, 2),
-                    "Score": round(score, 1)
-                })
-
-                if score > best_score:
-                    best_score = score
-                    best_config = results[-1]
-
-        df_results = pd.DataFrame(results).sort_values(by="Score", ascending=False)
-
-        st.subheader("📊 Scénarios")
-        st.dataframe(df_results)
-
-        # =========================
-        # 🏆 MEILLEUR
-        # =========================
-
-        st.subheader("🏆 Meilleur scénario")
-
-        st.success(
-            f"{best_config['Pause']} | Latence {best_config['Latence max']} min | "
-            f"{best_config['Production']} pièces | {best_config['Taux four (%)']}%"
-        )
-
-        # =========================
-        # 📈 PARETO
-        # =========================
-
-        st.subheader("📈 Pareto Production vs Four")
-
-        fig = px.scatter(
-            df_results,
-            x="Taux four (%)",
-            y="Production",
-            color="Pause",
-            hover_data=["Latence max"]
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
-        # =========================
-        # ⏱️ OVERTIME INTELLIGENT (BLOC UNIQUE)
-        # =========================
+    if st.button("Lancer optimisation"):
 
         st.subheader("⏱️ Overtime intelligent")
 
         overtime_range = [0, 15, 30, 45, 60]
 
-        results_ot = []
+        df_ot = pd.DataFrame([
+            {"Overtime": e, "Production": len(simulate_with_overtime(e))}
+            for e in overtime_range
+        ])
 
-        for extra in overtime_range:
-
-            df_extra = simulate_with_overtime(extra)
-
-            if df_extra.empty:
-                continue
-
-            results_ot.append({
-                "Overtime (min)": extra,
-                "Production": len(df_extra)
-            })
-
-        df_ot = pd.DataFrame(results_ot)
-
-        # 👉 TABLEAU 1
         st.dataframe(df_ot)
 
-        # 👉 DETECTION GAIN
         seuil = None
         gain = 0
 
         for i in range(1, len(df_ot)):
-            prev = df_ot.iloc[i-1]
-            curr = df_ot.iloc[i]
-
-            if curr["Production"] > prev["Production"]:
-                seuil = curr["Overtime (min)"]
-                gain = curr["Production"] - prev["Production"]
+            if df_ot.iloc[i]["Production"] > df_ot.iloc[i-1]["Production"]:
+                seuil = df_ot.iloc[i]["Overtime"]
+                gain = df_ot.iloc[i]["Production"] - df_ot.iloc[i-1]["Production"]
                 break
 
-        # 👉 MESSAGE
         if seuil:
-            st.info(f"👉 +{seuil} min → +{gain} pièce(s)")
-        else:
-            st.warning("👉 Aucun gain même avec overtime")
-
-        # 👉 TABLEAU 2 + HEURE
-        if seuil:
+            st.info(f"+{seuil} min → +{gain} pièce(s)")
 
             df_final = simulate_with_overtime(seuil)
             last_piece = df_final.iloc[-1]
 
-            st.subheader("📦 Dernière pièce ajoutée")
-
             st.dataframe(pd.DataFrame([last_piece]))
-
-            st.success(f"⏱️ Fin de production : {last_piece['Fin Déco']}")
-
-        # =========================
-        # 🧠 MIX ANNUEL
-        # =========================
-
-        st.subheader("🧠 Mix annuel optimal (C=cloison, V=cuve)")
-
-        configs = {
-            "CCVV": ["cloison", "cloison", "cuve", "cuve"],
-            "CVVC": ["cuve", "cloison", "cloison", "cuve"],
-            "CVCV": ["cuve", "cloison", "cuve", "cloison"],
-            "VVCC": ["cuve", "cuve", "cloison", "cloison"],
-            "Actuel": ["cloison", "cuve", "cloison", "cuve"],
-        }
-
-        mix_results = []
-
-        for name, pattern in configs.items():
-
-            perf = []
-
-            for lat in range(0, 11):
-
-                lat_orig = latence_max
-                globals()["latence_max"] = lat
-
-                count = 0
-                last_four_end = START_TIME
-                last_deco_end = START_TIME
-                i = 0
-
-                while True:
-
-                    produit = pattern[i % 4]
-                    data = PRODUITS[produit]
-
-                    four_time = data["four"] + 2 if i < 4 else data["four"]
-                    start_four = START_TIME if i == 0 else last_four_end + GAP_FOUR
-
-                    end_four = start_four + four_time
-                    end_refroid = end_four + data["refroid"]
-
-                    start_deco = max(end_refroid, last_deco_end)
-
-                    if PAUSE_START <= start_deco < PAUSE_END:
-                        start_deco = PAUSE_END
-
-                    latence = start_deco - end_refroid
-
-                    if latence > lat:
-                        shift = latence - lat
-                        start_four += shift
-                        end_four += shift
-                        end_refroid += shift
-                        start_deco = max(end_refroid, last_deco_end)
-
-                    end_deco = start_deco + data["deco"]
-
-                    if end_deco > END_TIME:
-                        break
-
-                    count += 1
-                    last_four_end = end_four
-                    last_deco_end = end_deco
-                    i += 1
-
-                globals()["latence_max"] = lat_orig
-                perf.append(count)
-
-            mix_results.append({
-                "Configuration": name,
-                "Moyenne": round(sum(perf)/len(perf), 1),
-                "Min": min(perf),
-                "Max": max(perf),
-                "Variabilité": max(perf) - min(perf)
-            })
-
-        df_mix = pd.DataFrame(mix_results).sort_values(
-            by=["Moyenne", "Min"], ascending=False
-        )
-
-        st.dataframe(df_mix)
-
-        best = df_mix.iloc[0]
-
-        st.success(
-            f"🏆 Mix recommandé : {best['Configuration']} "
-            f"(moy={best['Moyenne']} | min={best['Min']})"
-        )
+            st.success(f"Fin : {last_piece['Fin Déco']}")
