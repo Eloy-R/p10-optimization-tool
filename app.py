@@ -1,3 +1,46 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from datetime import datetime
+ =========================
+# PARAMETRES
+# =========================
+
+PRODUITS = {
+    "cloison": {"four": 35, "refroid": 45, "deco": 40},
+    "cuve": {"four": 45, "refroid": 46, "deco": 60},
+}
+
+BRAS_SEQUENCE = [4, 1, 2, 3]
+
+END_TIME = 21 * 60 + 45
+GAP_FOUR = 1
+
+PAUSE_START = 12 * 60
+PAUSE_END = 13 * 60
+
+# =========================
+# TABS
+# =========================
+
+tab1, tab2 = st.tabs(["Simulation P10", "Optimisation"])
+
+# =========================
+# OUTILS
+# =========================
+
+def format_time(m):
+    return f"{int(m//60):02d}:{int(m%60):02d}"
+
+def to_minutes(t):
+    return int(t[:2]) * 60 + int(t[3:])
+
+def to_datetime(t):
+    return datetime(2024, 1, 1, int(t[:2]), int(t[3:]))
+
+# =========================
+# SIMULATION
+# =========================
 with tab1:
 
     st.title("🔥 Simulateur P10 - Mode réel")
