@@ -43,7 +43,7 @@ def to_datetime(t):
 # =========================
 with tab1:
 
-    st.title("🔥 Simulateur P10 - Mode réel")
+    st.title("Simulateur P10 - Production")
 
     # =========================
     # UI
