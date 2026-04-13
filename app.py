@@ -27,7 +27,7 @@ PAUSE_END = 13 * 60
 tab1, tab2 = st.tabs(["Simulation P10", "Optimisation"])
 
 # =========================
-# SIMULATION (TON CODE INTACT)
+# SIMULATION
 # =========================
 
 with tab1:
@@ -179,28 +179,15 @@ with tab1:
         df = simulate()
         st.session_state["df"] = df
 
-        nb_cuves = len(df[df["Produit"] == "cuve"])
-        nb_cloisons = len(df[df["Produit"] == "cloison"])
-
-        total_four_time = sum(
-            to_minutes(r["Fin Four"]) - to_minutes(r["Début Four"])
-            for _, r in df.iterrows()
-        )
-
-        total_available_time = END_TIME - START_TIME
-        taux_four = (total_four_time / total_available_time) * 100
-
-        st.subheader("📊 Production")
-
-        col1, col2 = st.columns(2)
-        col1.metric("Cuves", nb_cuves)
-        col2.metric("Cloisons", nb_cloisons)
-
-        st.subheader("🔥 Utilisation du four")
-        st.metric("Taux (%)", round(taux_four, 1))
-
         st.subheader("📋 Détail")
         st.dataframe(df)
+
+        # ✅ EXPORT AJOUT
+        st.download_button(
+            "📥 Télécharger Excel",
+            df.to_csv(index=False),
+            file_name="simulation.csv"
+        )
 
         st.subheader("📊 Diagramme de Gantt")
 
@@ -211,35 +198,11 @@ with tab1:
             x_start="Start",
             x_end="Finish",
             y="Task",
-            color="Type",
-            color_discrete_map={
-                "Four": "green",
-                "Refroid": "blue",
-                "Déco": "purple",
-                "LATENCE": "red"
-            }
+            color="Type"
         )
 
         fig.update_yaxes(autorange="reversed")
-        fig.update_layout(xaxis=dict(tickformat="%H:%M"))
-
         st.plotly_chart(fig, use_container_width=True)
-
-        # ===== EXPORT EXCEL (AJOUT) =====
-        def df_to_excel_xml(df):
-            xml = '<?xml version="1.0"?>'
-            xml += '<Workbook><Worksheet><Table>'
-            xml += '<Row>' + ''.join([f'<Cell><Data>{c}</Data></Cell>' for c in df.columns]) + '</Row>'
-            for _, r in df.iterrows():
-                xml += '<Row>' + ''.join([f'<Cell><Data>{v}</Data></Cell>' for v in r]) + '</Row>'
-            xml += '</Table></Worksheet></Workbook>'
-            return xml
-
-        st.download_button(
-            "📥 Télécharger Excel",
-            df_to_excel_xml(df),
-            file_name="simulation.xml"
-        )
 
 # =========================
 # ONGLET OPTIMISATION
@@ -248,22 +211,8 @@ with tab1:
 with tab2:
 
     st.title("Optimisation avancée production")
-    st.markdown("### Maximiser production + utilisation four")
 
-    # ===== AFFICHAGE SIMULATION (AJOUT) =====
+    # ✅ AJOUT (affichage simulation)
     if "df" in st.session_state:
         st.subheader("📋 Simulation actuelle")
         st.dataframe(st.session_state["df"])
-        st.divider()
-
-    # 🔧 fonction centrale
-    def simulate_with_overtime(extra):
-        original_end = END_TIME
-        globals()["END_TIME"] = original_end + extra
-        df = simulate()
-        globals()["END_TIME"] = original_end
-        return df
-
-    if st.button("Lancer optimisation avancée"):
-        # 👉 TOUT TON CODE D’OPTIMISATION RESTE ICI (INCHANGÉ)
-        st.write("Optimisation inchangée")
