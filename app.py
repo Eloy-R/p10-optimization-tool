@@ -116,11 +116,20 @@ with tab1:
             start_deco = max(end_refroid, last_deco_end)
 
             # PAUSE MIDI
+            
             if pause_active:
-                if PAUSE_START <= start_deco < PAUSE_END:
-                    start_deco = PAUSE_END
 
-            latence = start_deco - end_refroid
+                end_deco_temp = start_deco + deco
+
+            # CAS 1 : démarre dans la pause
+            if PAUSE_START <= start_deco < PAUSE_END:
+                start_deco = PAUSE_END
+        
+            # CAS 2 : chevauche la pause
+            elif start_deco < PAUSE_START and end_deco_temp > PAUSE_START:
+                start_deco = PAUSE_END
+        
+                    latence = start_deco - end_refroid
 
             # CONTRAINTE LATENCE
             if latence > latence_max:
