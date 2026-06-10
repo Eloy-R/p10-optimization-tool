@@ -116,7 +116,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         update_all_cooling(now)
         move_finished_to_ready(now)
 
-        # Si Z2 est libre et Z1 occupée, on pousse de Z1 vers Z2
         if zones["Z2"] is None and zones["Z1"] is not None:
             occ = zones["Z1"]
             zones["Z1"] = None
@@ -138,7 +137,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         rebalance_zones(until_time)
 
         while ready_for_deco:
-            # priorité à la pièce refroidie le plus tôt
             ready_for_deco.sort(key=lambda x: (x["cool_finish"], x["arm"]))
             piece = ready_for_deco[0]
 
@@ -194,7 +192,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             zone_last_update["Z1"] = now
             return now
 
-        # si les deux zones sont occupées, on attend la première libération réelle
         future_times = []
         for zn in ["Z1", "Z2"]:
             occ = zones[zn]
@@ -233,7 +230,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
 
         raw_start_four = max(next_send_time, arm_available[arm])
 
-        # estimation prudente pour limiter la latence en amont
         est_end_four = raw_start_four + heat
         est_cool_finish = est_end_four + cool_required
         est_start_deco, pause_reason = predicted_deco_start(est_cool_finish, deco, deco_available)
@@ -379,7 +375,7 @@ def compute_global_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dic
 
     total_available = max(1, end_time - start_time)
     total_four = (df["Fin Four (min)"] - df["Début Four (min)"]).sum()
-    taux_four_global = (total_four / (2 * total_available)) * 100  # 2 fours
+    taux_four_global = (total_four / (2 * total_available)) * 100
 
     return {
         "production": int(len(df)),
