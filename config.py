@@ -1,3 +1,8 @@
+PRM_LABELS = {
+    "PRM4500-1": "PRM4500-1 (XPERCO)",
+    "PRM4500-2": "PRM4500-2 (OXY)",
+}
+
 DEFAULT_CYCLE_TIMES = {
     "PRM4500-1": {  # XPERCO
         "Cuve Xperco DEC": {"heat": 33, "cool": 33, "deco": 16},
@@ -22,6 +27,6 @@ DEFAULT_SEND_GAP = 20
 DEFAULT_DECO_GAP = 5
 
 DEFAULT_FIRST_ARMS = {
-    "PRM4500-1": 1,  # XPERCO
-    "PRM4500-2": 4,  # OXY
+    "PRM4500-1": 1,
+    "PRM4500-2": 4,
 }
