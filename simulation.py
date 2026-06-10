@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+import copy
 import pandas as pd
 
 
@@ -42,228 +43,268 @@ class PRMSimulationConfig:
     cycle_times: Dict[str, Dict[str, int]]
     first_arm: int = 4
     send_gap_min: int = 20
-    latence_max: int = 10
+    latence_max: int = 20
     deco_gap_min: int = 5
     pause_windows: Optional[List[Tuple[int, int]]] = None
     extra_first_cycles: int = 2
     extra_first_cycles_count: int = 4
 
 
+def _schedule_pending(
+    pending: List[dict],
+    deco_available: int,
+    deco_gap_min: int,
+    pause_windows: List[Tuple[int, int]],
+):
+    ordered = sorted(pending, key=lambda x: (x["cool_finish"], x["arm"], x["cycle"]))
+    current = deco_available
+    scheduled = []
+
+    for p in ordered:
+        start_deco = max(current, p["cool_finish"])
+        start_deco, pause_reason = apply_pause_windows(start_deco, p["deco"], pause_windows)
+        end_deco = start_deco + p["deco"]
+        latence = start_deco - p["cool_finish"]
+
+        s = copy.deepcopy(p)
+        s["start_deco"] = start_deco
+        s["end_deco"] = end_deco
+        s["latence"] = latence
+        s["pause_reason"] = pause_reason or ""
+        scheduled.append(s)
+
+        current = end_deco + deco_gap_min
+
+    return scheduled
+
+
 def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
+    """
+    Version corrigée orientée métier :
+    - la latence max devient une CONTRAINTE DURE
+    - si une pièce projetée dépasse la latence max, l'entrée au four est retardée jusqu'à respecter la limite
+    - 2 zones de refroidissement modélisées comme 2 capacités de refroidissement parallèles (tampons)
+
+    Remarque importante :
+    le détail spatial Z1 -> Z2 reste simplifié pour cette version.
+    L'objectif prioritaire ici est de faire respecter la règle métier de latence.
+    """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
 
-    deco_available = config.start_time
-    next_send_time = config.start_time
+    # disponibilité des bras après décoffrage
     arm_available = {arm: config.start_time for arm in config.arms_config}
 
-    zones = {"Z1": None, "Z2": None}
-    zone_last_update = {"Z1": config.start_time, "Z2": config.start_time}
-    ready_for_deco: List[dict] = []
+    # disponibilité des 2 zones de refroidissement (capacités parallèles)
+    cool_slots = {
+        "Z1": config.start_time,
+        "Z2": config.start_time,
+    }
+
+    # poste déco/coffrage unique
+    deco_available = config.start_time
+
+    # envoi vers le four
+    next_send_time = config.start_time
+
+    pending = []   # pièces en attente de déco (cool fini ou pas encore fini)
     results = []
 
-    def update_zone_cooling(zone_name: str, now: int):
-        occ = zones[zone_name]
-        if occ is None:
-            zone_last_update[zone_name] = now
-            return
+    def project_piece(start_four: int, arm: int, product: str, cycle: int):
+        data = config.cycle_times[product]
+        heat = data["heat"] + (config.extra_first_cycles if cycle < config.extra_first_cycles_count else 0)
+        cool = data["cool"]
+        deco = data["deco"]
 
-        elapsed = max(0, now - zone_last_update[zone_name])
-        if elapsed <= 0:
-            return
-
-        occ["cool_done"] += elapsed
-        if zone_name == "Z1":
-            occ["time_z1"] += elapsed
-        else:
-            occ["time_z2"] += elapsed
-
-        zone_last_update[zone_name] = now
-
-        if occ["cool_done"] >= occ["cool_required"] and occ["cool_finish"] is None:
-            over = occ["cool_done"] - occ["cool_required"]
-            occ["cool_finish"] = now - over
-
-    def update_all_cooling(now: int):
-        update_zone_cooling("Z1", now)
-        update_zone_cooling("Z2", now)
-
-    def move_finished_to_ready(now: int):
-        moved = True
-        while moved:
-            moved = False
-            for zone_name in ["Z2", "Z1"]:
-                occ = zones[zone_name]
-                if occ is not None and occ["cool_finish"] is not None:
-                    ready_for_deco.append(occ)
-                    zones[zone_name] = None
-                    zone_last_update[zone_name] = now
-                    moved = True
-                    break
-
-    def rebalance_zones(now: int):
-        update_all_cooling(now)
-        move_finished_to_ready(now)
-
-        if zones["Z2"] is None and zones["Z1"] is not None:
-            occ = zones["Z1"]
-            zones["Z1"] = None
-            zone_last_update["Z1"] = now
-            if occ["path"] == "":
-                occ["path"] = "Z1→Z2"
-            zones["Z2"] = occ
-            zone_last_update["Z2"] = now
-
-    def predicted_deco_start(cool_finish: int, deco_duration: int, manual_available: int) -> Tuple[int, str]:
-        start_deco = max(cool_finish, manual_available)
-        start_deco, pause_reason = apply_pause_windows(start_deco, deco_duration, pause_windows)
-        return start_deco, pause_reason or ""
-
-    def try_process_ready(until_time: int):
-        nonlocal deco_available
-        update_all_cooling(until_time)
-        rebalance_zones(until_time)
-
-        while ready_for_deco:
-            ready_for_deco.sort(key=lambda x: (x["cool_finish"], x["arm"]))
-            piece = ready_for_deco[0]
-
-            start_deco, pause_reason = predicted_deco_start(piece["cool_finish"], piece["deco"], deco_available)
-            if start_deco > until_time:
-                break
-
-            end_deco = start_deco + piece["deco"]
-            latence = start_deco - piece["cool_finish"]
-
-            reason = piece.get("reason", "")
-            if pause_reason:
-                reason = pause_reason if not reason else f"{reason}; Pause"
-            if latence > config.latence_max and "Latence" not in reason:
-                reason = "Latence" if not reason else f"{reason}; Latence"
-
-            results.append(
-                {
-                    "PRM": config.prm_name,
-                    "Bras": piece["arm"],
-                    "Produit": piece["product"],
-                    "Début Four (min)": piece["start_four"],
-                    "Fin Four (min)": piece["end_four"],
-                    "Début Refroidissement (min)": piece["start_cool"],
-                    "Fin Refroidissement (min)": piece["cool_finish"],
-                    "Début Déco (min)": start_deco,
-                    "Fin Déco (min)": end_deco,
-                    "Latence (min)": latence,
-                    "Attente avant four (min)": piece["attente_avant_four"],
-                    "Attente avant déco (min)": start_deco - piece["cool_finish"],
-                    "Temps zone 1 (min)": piece["time_z1"],
-                    "Temps zone 2 (min)": piece["time_z2"],
-                    "Chemin refroidissement": piece["path"] or ("Z2 seul" if piece["time_z1"] == 0 else "Z1→Z2"),
-                    "Motif décalage": reason,
-                    "Cycle": piece["cycle"],
-                }
-            )
-
-            deco_available = end_deco + config.deco_gap_min
-            arm_available[piece["arm"]] = end_deco
-            ready_for_deco.pop(0)
-
-    def insert_into_cooling(piece: dict, now: int) -> int:
-        rebalance_zones(now)
-
-        if zones["Z2"] is None:
-            piece["path"] = "Z2 seul"
-            zones["Z2"] = piece
-            zone_last_update["Z2"] = now
-            return now
-
-        if zones["Z1"] is None:
-            piece["path"] = "Z1→Z2"
-            zones["Z1"] = piece
-            zone_last_update["Z1"] = now
-            return now
-
-        future_times = []
-        for zn in ["Z1", "Z2"]:
-            occ = zones[zn]
-            remaining = max(0, occ["cool_required"] - occ["cool_done"])
-            future_times.append(now + remaining)
-
-        future = min(future_times)
-        rebalance_zones(future)
-
-        if zones["Z2"] is None:
-            piece["path"] = "Z2 seul"
-            zones["Z2"] = piece
-            zone_last_update["Z2"] = future
-            return future
-
-        if zones["Z1"] is None:
-            piece["path"] = "Z1→Z2"
-            zones["Z1"] = piece
-            zone_last_update["Z1"] = future
-            return future
-
-        raise RuntimeError(f"Insertion impossible dans les zones de refroidissement pour {config.prm_name}")
-
-    cycle = 0
-    while True:
-        arm = arm_order[cycle % len(arm_order)]
-        product = config.arms_config[arm]
-        t = config.cycle_times[product]
-
-        heat = t["heat"] + (config.extra_first_cycles if cycle < config.extra_first_cycles_count else 0)
-        cool_required = t["cool"]
-        deco = t["deco"]
-
-        try_process_ready(next_send_time)
-
-        raw_start_four = max(next_send_time, arm_available[arm])
-        est_end_four = raw_start_four + heat
-        est_cool_finish = est_end_four + cool_required
-        est_start_deco, pause_reason = predicted_deco_start(est_cool_finish, deco, deco_available)
-        est_latence = est_start_deco - est_cool_finish
-        shift = max(0, est_latence - config.latence_max)
-
-        start_four = raw_start_four + shift
         end_four = start_four + heat
 
-        if end_four > config.end_time:
-            break
+        # Choix du slot de refroidissement le plus tôt disponible
+        # priorité à Z2 si libre à la minute de sortie four, sinon Z1, sinon le premier slot qui se libère
+        if cool_slots["Z2"] <= end_four:
+            chosen_zone = "Z2"
+            cool_start = end_four
+        elif cool_slots["Z1"] <= end_four:
+            chosen_zone = "Z1"
+            cool_start = end_four
+        else:
+            chosen_zone = min(cool_slots, key=lambda z: cool_slots[z])
+            cool_start = cool_slots[chosen_zone]
 
-        try_process_ready(end_four)
+        cool_finish = cool_start + cool
 
-        piece = {
+        projected = {
+            "PRM": config.prm_name,
             "arm": arm,
             "product": product,
             "cycle": cycle + 1,
             "start_four": start_four,
             "end_four": end_four,
-            "start_cool": end_four,
-            "cool_required": cool_required,
-            "cool_done": 0,
-            "cool_finish": None,
+            "start_cool": cool_start,
+            "cool_finish": cool_finish,
             "deco": deco,
-            "time_z1": 0,
-            "time_z2": 0,
-            "path": "",
             "attente_avant_four": max(0, start_four - arm_available[arm]),
-            "reason": "Latence" if shift > 0 else ("Pause" if pause_reason else ""),
+            "time_z1": cool if chosen_zone == "Z1" else 0,
+            "time_z2": cool if chosen_zone == "Z2" else 0,
+            "path": "Z1" if chosen_zone == "Z1" else "Z2 seul",
+            "reason": "",
+            "chosen_zone": chosen_zone,
         }
+        return projected
 
-        insert_time = insert_into_cooling(piece, end_four)
-        if insert_time > end_four:
-            if piece["reason"]:
-                piece["reason"] += "; Tampon"
-            else:
-                piece["reason"] = "Tampon"
+    cycle = 0
+    while True:
+        arm = arm_order[cycle % len(arm_order)]
+        product = config.arms_config[arm]
 
+        # Planifier tout ce qui est déjà en attente avec l'état actuel
+        pending_schedule = _schedule_pending(
+            pending, deco_available, config.deco_gap_min, pause_windows
+        )
+
+        # Sécuriser l'invariant : aucune pièce déjà pendante ne doit déjà violer la contrainte
+        if pending_schedule and max(x["latence"] for x in pending_schedule) > config.latence_max:
+            raise RuntimeError(
+                f"La file d'attente existante dépasse déjà la latence max ({config.latence_max} min). "
+                f"Réduisez le temps entre envois, augmentez la latence max ou la marge opératoire."
+            )
+
+        raw_start_four = max(next_send_time, arm_available[arm])
+
+        # Recherche du premier démarrage four qui respecte la latence max en projection
+        start_four = raw_start_four
+        found = False
+        guard = 0
+
+        while guard < 2000:
+            candidate = project_piece(start_four, arm, product, cycle)
+            trial_pending = pending + [candidate]
+            trial_schedule = _schedule_pending(
+                trial_pending, deco_available, config.deco_gap_min, pause_windows
+            )
+
+            candidate_scheduled = next(
+                x for x in trial_schedule
+                if x["cycle"] == candidate["cycle"] and x["arm"] == arm
+            )
+
+            if (
+                candidate_scheduled["latence"] <= config.latence_max
+                and candidate_scheduled["end_deco"] <= config.end_time
+            ):
+                found = True
+                break
+
+            # on décale au moins du dépassement observé, sinon de 1 minute
+            delay = max(1, candidate_scheduled["latence"] - config.latence_max)
+            start_four += delay
+            guard += 1
+
+        if not found:
+            break
+
+        # Si le four finit après la fin de journée, on stoppe
+        if candidate["end_four"] > config.end_time:
+            break
+
+        # On engage réellement la pièce
+        pending.append(candidate)
+        cool_slots[candidate["chosen_zone"]] = candidate["cool_finish"]
         next_send_time = start_four + config.send_gap_min
+
+        # Replanifier et sortir toutes les pièces devenues fermes avant le prochain envoi
+        scheduled_all = _schedule_pending(
+            pending, deco_available, config.deco_gap_min, pause_windows
+        )
+
+        # On fige les pièces qui commencent leur déco avant ou à next_send_time
+        still_pending = []
+        for s in scheduled_all:
+            if s["start_deco"] <= next_send_time and s["end_deco"] <= config.end_time:
+                reason = s["pause_reason"] or s["reason"]
+                if s["latence"] > config.latence_max:
+                    reason = "Latence" if not reason else f"{reason}; Latence"
+
+                results.append({
+                    "PRM": config.prm_name,
+                    "Bras": s["arm"],
+                    "Produit": s["product"],
+                    "Début Four (min)": s["start_four"],
+                    "Fin Four (min)": s["end_four"],
+                    "Début Refroidissement (min)": s["start_cool"],
+                    "Fin Refroidissement (min)": s["cool_finish"],
+                    "Début Déco (min)": s["start_deco"],
+                    "Fin Déco (min)": s["end_deco"],
+                    "Latence (min)": s["latence"],
+                    "Attente avant four (min)": s["attente_avant_four"],
+                    "Attente avant déco (min)": s["latence"],
+                    "Temps zone 1 (min)": s["time_z1"],
+                    "Temps zone 2 (min)": s["time_z2"],
+                    "Chemin refroidissement": s["path"],
+                    "Motif décalage": reason,
+                    "Cycle": s["cycle"],
+                })
+
+                deco_available = s["end_deco"] + config.deco_gap_min
+                arm_available[s["arm"]] = s["end_deco"]
+            else:
+                still_pending.append({
+                    k: v for k, v in s.items()
+                    if k in [
+                        "PRM",
+                        "arm",
+                        "product",
+                        "cycle",
+                        "start_four",
+                        "end_four",
+                        "start_cool",
+                        "cool_finish",
+                        "deco",
+                        "attente_avant_four",
+                        "time_z1",
+                        "time_z2",
+                        "path",
+                        "reason",
+                        "chosen_zone",
+                    ]
+                })
+
+        pending = still_pending
         cycle += 1
 
         if start_four >= config.end_time:
             break
 
-    try_process_ready(config.end_time)
+    # flush final
+    final_schedule = _schedule_pending(
+        pending, deco_available, config.deco_gap_min, pause_windows
+    )
+
+    for s in final_schedule:
+        if s["end_deco"] <= config.end_time:
+            reason = s["pause_reason"] or s["reason"]
+            if s["latence"] > config.latence_max:
+                reason = "Latence" if not reason else f"{reason}; Latence"
+
+            results.append({
+                "PRM": config.prm_name,
+                "Bras": s["arm"],
+                "Produit": s["product"],
+                "Début Four (min)": s["start_four"],
+                "Fin Four (min)": s["end_four"],
+                "Début Refroidissement (min)": s["start_cool"],
+                "Fin Refroidissement (min)": s["cool_finish"],
+                "Début Déco (min)": s["start_deco"],
+                "Fin Déco (min)": s["end_deco"],
+                "Latence (min)": s["latence"],
+                "Attente avant four (min)": s["attente_avant_four"],
+                "Attente avant déco (min)": s["latence"],
+                "Temps zone 1 (min)": s["time_z1"],
+                "Temps zone 2 (min)": s["time_z2"],
+                "Chemin refroidissement": s["path"],
+                "Motif décalage": reason,
+                "Cycle": s["cycle"],
+            })
+
     return pd.DataFrame(results)
 
 
@@ -313,38 +354,35 @@ def build_gantt_source(df: pd.DataFrame) -> pd.DataFrame:
     tasks = []
     for _, row in df.iterrows():
         label = f"{row['PRM']} - B{row['Bras']} - {row['Produit']}"
-        tasks.extend(
-            [
-                {
-                    "Task": label,
-                    "Start": to_datetime(row["Début Four (min)"]),
-                    "Finish": to_datetime(row["Fin Four (min)"]),
-                    "Type": "Four",
-                },
-                {
-                    "Task": label,
-                    "Start": to_datetime(row["Début Refroidissement (min)"]),
-                    "Finish": to_datetime(row["Fin Refroidissement (min)"]),
-                    "Type": "Refroidissement",
-                },
-                {
-                    "Task": label,
-                    "Start": to_datetime(row["Début Déco (min)"]),
-                    "Finish": to_datetime(row["Fin Déco (min)"]),
-                    "Type": "Déco",
-                },
-            ]
-        )
+
+        tasks.extend([
+            {
+                "Task": label,
+                "Start": to_datetime(row["Début Four (min)"]),
+                "Finish": to_datetime(row["Fin Four (min)"]),
+                "Type": "Four",
+            },
+            {
+                "Task": label,
+                "Start": to_datetime(row["Début Refroidissement (min)"]),
+                "Finish": to_datetime(row["Fin Refroidissement (min)"]),
+                "Type": "Refroidissement",
+            },
+            {
+                "Task": label,
+                "Start": to_datetime(row["Début Déco (min)"]),
+                "Finish": to_datetime(row["Fin Déco (min)"]),
+                "Type": "Déco",
+            },
+        ])
 
         if row["Latence (min)"] > 0:
-            tasks.append(
-                {
-                    "Task": label,
-                    "Start": to_datetime(row["Fin Refroidissement (min)"]),
-                    "Finish": to_datetime(row["Début Déco (min)"]),
-                    "Type": "LATENCE",
-                }
-            )
+            tasks.append({
+                "Task": label,
+                "Start": to_datetime(row["Fin Refroidissement (min)"]),
+                "Finish": to_datetime(row["Début Déco (min)"]),
+                "Type": "LATENCE",
+            })
 
     return pd.DataFrame(tasks)
 
