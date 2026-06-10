@@ -5,11 +5,11 @@ import pandas as pd
 
 
 def format_time(minutes: int) -> str:
-    return f"{int(minutes//60):02d}:{int(minutes%60):02d}"
+    return f"{int(minutes // 60):02d}:{int(minutes % 60):02d}"
 
 
 def to_datetime(minutes: int) -> datetime:
-    return datetime(2024, 1, 1, int(minutes//60), int(minutes%60))
+    return datetime(2024, 1, 1, int(minutes // 60), int(minutes % 60))
 
 
 def normalize_arm_order(first_arm: int) -> List[int]:
@@ -50,17 +50,6 @@ class PRMSimulationConfig:
 
 
 def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
-    """
-    Simulation évènementielle pragmatique par PRM.
-
-    Hypothèses de cette version :
-    - 2 zones de refroidissement dynamiques (Z1, Z2)
-    - priorité à Z2 si libre à la sortie four
-    - si Z2 occupée : insertion en Z1 puis bascule vers Z2 quand possible
-    - décoffrage/coffrage manuel, une seule ressource par PRM
-    - la latence max est appliquée par décalage préventif de l'entrée four
-      sur une estimation prudente basée sur la disponibilité déco et le refroidissement requis
-    """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
 
@@ -132,7 +121,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
 
     def try_process_ready(until_time: int):
         nonlocal deco_available
-
         update_all_cooling(until_time)
         rebalance_zones(until_time)
 
@@ -153,25 +141,27 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             if latence > config.latence_max and "Latence" not in reason:
                 reason = "Latence" if not reason else f"{reason}; Latence"
 
-            results.append({
-                "PRM": config.prm_name,
-                "Bras": piece["arm"],
-                "Produit": piece["product"],
-                "Début Four (min)": piece["start_four"],
-                "Fin Four (min)": piece["end_four"],
-                "Début Refroidissement (min)": piece["start_cool"],
-                "Fin Refroidissement (min)": piece["cool_finish"],
-                "Début Déco (min)": start_deco,
-                "Fin Déco (min)": end_deco,
-                "Latence (min)": latence,
-                "Attente avant four (min)": piece["attente_avant_four"],
-                "Attente avant déco (min)": start_deco - piece["cool_finish"],
-                "Temps zone 1 (min)": piece["time_z1"],
-                "Temps zone 2 (min)": piece["time_z2"],
-                "Chemin refroidissement": piece["path"] or ("Z2 seul" if piece["time_z1"] == 0 else "Z1→Z2"),
-                "Motif décalage": reason,
-                "Cycle": piece["cycle"],
-            })
+            results.append(
+                {
+                    "PRM": config.prm_name,
+                    "Bras": piece["arm"],
+                    "Produit": piece["product"],
+                    "Début Four (min)": piece["start_four"],
+                    "Fin Four (min)": piece["end_four"],
+                    "Début Refroidissement (min)": piece["start_cool"],
+                    "Fin Refroidissement (min)": piece["cool_finish"],
+                    "Début Déco (min)": start_deco,
+                    "Fin Déco (min)": end_deco,
+                    "Latence (min)": latence,
+                    "Attente avant four (min)": piece["attente_avant_four"],
+                    "Attente avant déco (min)": start_deco - piece["cool_finish"],
+                    "Temps zone 1 (min)": piece["time_z1"],
+                    "Temps zone 2 (min)": piece["time_z2"],
+                    "Chemin refroidissement": piece["path"] or ("Z2 seul" if piece["time_z1"] == 0 else "Z1→Z2"),
+                    "Motif décalage": reason,
+                    "Cycle": piece["cycle"],
+                }
+            )
 
             deco_available = end_deco + config.deco_gap_min
             arm_available[piece["arm"]] = end_deco
@@ -216,7 +206,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         raise RuntimeError(f"Insertion impossible dans les zones de refroidissement pour {config.prm_name}")
 
     cycle = 0
-
     while True:
         arm = arm_order[cycle % len(arm_order)]
         product = config.arms_config[arm]
@@ -229,7 +218,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         try_process_ready(next_send_time)
 
         raw_start_four = max(next_send_time, arm_available[arm])
-
         est_end_four = raw_start_four + heat
         est_cool_finish = est_end_four + cool_required
         est_start_deco, pause_reason = predicted_deco_start(est_cool_finish, deco, deco_available)
@@ -263,7 +251,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         }
 
         insert_time = insert_into_cooling(piece, end_four)
-
         if insert_time > end_four:
             if piece["reason"]:
                 piece["reason"] += "; Tampon"
@@ -278,14 +265,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
 
     try_process_ready(config.end_time)
     return pd.DataFrame(results)
-
-
-def simulate_all(configs: List[PRMSimulationConfig]) -> pd.DataFrame:
-    frames = [simulate_prm(cfg) for cfg in configs]
-    frames = [f for f in frames if not f.empty]
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
 
 
 def format_simulation_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -306,10 +285,15 @@ def format_simulation_df(df: pd.DataFrame) -> pd.DataFrame:
         out[c_out] = out[c_in].apply(format_time)
 
     ordered = [
-        "PRM", "Bras", "Produit",
-        "Début Four", "Fin Four",
-        "Début Refroidissement", "Fin Refroidissement",
-        "Début Déco", "Fin Déco",
+        "PRM",
+        "Bras",
+        "Produit",
+        "Début Four",
+        "Fin Four",
+        "Début Refroidissement",
+        "Fin Refroidissement",
+        "Début Déco",
+        "Fin Déco",
         "Latence (min)",
         "Attente avant four (min)",
         "Attente avant déco (min)",
@@ -329,59 +313,60 @@ def build_gantt_source(df: pd.DataFrame) -> pd.DataFrame:
     tasks = []
     for _, row in df.iterrows():
         label = f"{row['PRM']} - B{row['Bras']} - {row['Produit']}"
-
-        tasks.extend([
-            {
-                "Task": label,
-                "Start": to_datetime(row["Début Four (min)"]),
-                "Finish": to_datetime(row["Fin Four (min)"]),
-                "Type": "Four",
-            },
-            {
-                "Task": label,
-                "Start": to_datetime(row["Début Refroidissement (min)"]),
-                "Finish": to_datetime(row["Fin Refroidissement (min)"]),
-                "Type": "Refroidissement",
-            },
-            {
-                "Task": label,
-                "Start": to_datetime(row["Début Déco (min)"]),
-                "Finish": to_datetime(row["Fin Déco (min)"]),
-                "Type": "Déco",
-            },
-        ])
+        tasks.extend(
+            [
+                {
+                    "Task": label,
+                    "Start": to_datetime(row["Début Four (min)"]),
+                    "Finish": to_datetime(row["Fin Four (min)"]),
+                    "Type": "Four",
+                },
+                {
+                    "Task": label,
+                    "Start": to_datetime(row["Début Refroidissement (min)"]),
+                    "Finish": to_datetime(row["Fin Refroidissement (min)"]),
+                    "Type": "Refroidissement",
+                },
+                {
+                    "Task": label,
+                    "Start": to_datetime(row["Début Déco (min)"]),
+                    "Finish": to_datetime(row["Fin Déco (min)"]),
+                    "Type": "Déco",
+                },
+            ]
+        )
 
         if row["Latence (min)"] > 0:
-            tasks.append({
-                "Task": label,
-                "Start": to_datetime(row["Fin Refroidissement (min)"]),
-                "Finish": to_datetime(row["Début Déco (min)"]),
-                "Type": "LATENCE",
-            })
+            tasks.append(
+                {
+                    "Task": label,
+                    "Start": to_datetime(row["Fin Refroidissement (min)"]),
+                    "Finish": to_datetime(row["Début Déco (min)"]),
+                    "Type": "LATENCE",
+                }
+            )
 
     return pd.DataFrame(tasks)
 
 
-def compute_global_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dict:
+def compute_prm_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dict:
     if df.empty:
         return {
             "production": 0,
-            "taux_four_global": 0.0,
+            "taux_four": 0.0,
             "latence_moy": 0.0,
             "latence_max_obs": 0.0,
             "par_produit": {},
-            "par_prm": {},
         }
 
     total_available = max(1, end_time - start_time)
     total_four = (df["Fin Four (min)"] - df["Début Four (min)"]).sum()
-    taux_four_global = (total_four / (2 * total_available)) * 100
+    taux_four = (total_four / total_available) * 100
 
     return {
         "production": int(len(df)),
-        "taux_four_global": round(taux_four_global, 1),
+        "taux_four": round(taux_four, 1),
         "latence_moy": round(df["Latence (min)"].mean(), 2),
         "latence_max_obs": round(df["Latence (min)"].max(), 2),
         "par_produit": df["Produit"].value_counts().to_dict(),
-        "par_prm": df["PRM"].value_counts().to_dict(),
     }
