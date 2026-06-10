@@ -1,69 +1,142 @@
-from ortools.sat.python import cp_model
+import itertools
+import pandas as pd
+from simulation import PRMSimulationConfig, simulate_all, compute_global_kpis, format_simulation_df
 
-def optimize(nb_cycles=40):
 
-    model = cp_model.CpModel()
-    horizon = 24 * 60
+def _score(kpis: dict) -> float:
+    return (
+        kpis["production"] * 100
+        + kpis["taux_four_global"]
+        - kpis["latence_moy"] * 10
+        - kpis["latence_max_obs"] * 2
+    )
 
-    starts = []
-    ends = []
-    intervals = []
 
-    for i in range(nb_cycles):
+def _build_configs(start_time, end_time, base_configs, send_gap_min, latence_max, deco_gap_min, pause_windows):
+    cfgs = []
+    for prm_name, vals in base_configs.items():
+        cfgs.append(
+            PRMSimulationConfig(
+                prm_name=prm_name,
+                start_time=start_time,
+                end_time=end_time,
+                arms_config=vals["arms_config"],
+                cycle_times=vals["cycle_times"],
+                first_arm=vals["first_arm"],
+                send_gap_min=send_gap_min,
+                latence_max=latence_max,
+                deco_gap_min=deco_gap_min,
+                pause_windows=pause_windows,
+            )
+        )
+    return cfgs
 
-        is_cuve = model.NewBoolVar(f"is_cuve_{i}")
 
-        # Durées
-        four = model.NewIntVar(35, 45, f"four_{i}")
-        cool = model.NewIntVar(45, 46, f"cool_{i}")
-        deco = model.NewIntVar(40, 60, f"deco_{i}")
+def evaluate_scenarios(start_time, end_time, base_configs, send_gap_values, latence_values, deco_gap_values, pause_sets):
+    records = []
+    best = None
+    best_score = float("-inf")
 
-        model.Add(four == 45).OnlyEnforceIf(is_cuve)
-        model.Add(four == 35).OnlyEnforceIf(is_cuve.Not())
+    for (pause_name, pause_windows), send_gap, lat, deco_gap in itertools.product(
+        pause_sets, send_gap_values, latence_values, deco_gap_values
+    ):
+        cfgs = _build_configs(start_time, end_time, base_configs, send_gap, lat, deco_gap, pause_windows)
+        df = simulate_all(cfgs)
+        if df.empty:
+            continue
 
-        model.Add(cool == 46).OnlyEnforceIf(is_cuve)
-        model.Add(cool == 45).OnlyEnforceIf(is_cuve.Not())
+        kpis = compute_global_kpis(df, start_time, end_time)
+        score = round(_score(kpis), 2)
 
-        model.Add(deco == 60).OnlyEnforceIf(is_cuve)
-        model.Add(deco == 40).OnlyEnforceIf(is_cuve.Not())
+        record = {
+            "Scenario": f"{pause_name} | send {send_gap} | lat {lat} | deco {deco_gap}",
+            "Pause": pause_name,
+            "Send gap": send_gap,
+            "Latence max": lat,
+            "Déco gap": deco_gap,
+            "Production": kpis["production"],
+            "Taux four global (%)": kpis["taux_four_global"],
+            "Latence moy": kpis["latence_moy"],
+            "Latence max observée": kpis["latence_max_obs"],
+            "Score": score,
+        }
+        records.append(record)
 
-        start = model.NewIntVar(0, horizon, f"start_{i}")
-        mid1 = model.NewIntVar(0, horizon, f"mid1_{i}")
-        mid2 = model.NewIntVar(0, horizon, f"mid2_{i}")
-        end = model.NewIntVar(0, horizon, f"end_{i}")
+        if score > best_score:
+            best_score = score
+            best = record
 
-        model.Add(mid1 == start + four)
-        model.Add(mid2 == mid1 + cool)
-        model.Add(end == mid2 + deco)
+    df_records = (
+        pd.DataFrame(records).sort_values("Score", ascending=False).reset_index(drop=True)
+        if records else pd.DataFrame()
+    )
+    return df_records, best
 
-        interval = model.NewIntervalVar(start, deco, end, f"interval_{i}")
 
-        starts.append(start)
-        ends.append(end)
-        intervals.append(interval)
+def evaluate_overtime(start_time, end_time, base_configs, send_gap_min, latence_max, deco_gap_min, pause_windows, overtime_values):
+    rows = []
+    best_extra = None
+    last_piece = None
+    prev_prod = None
 
-    # Goulot décoffrage
-    model.AddNoOverlap(intervals)
+    for extra in overtime_values:
+        cfgs = _build_configs(start_time, end_time + extra, base_configs, send_gap_min, latence_max, deco_gap_min, pause_windows)
+        df = simulate_all(cfgs)
+        prod = 0 if df.empty else len(df)
 
-    makespan = model.NewIntVar(0, horizon, "makespan")
-    model.AddMaxEquality(makespan, ends)
+        rows.append({
+            "Overtime (min)": extra,
+            "Production": prod,
+        })
 
-    model.Minimize(makespan)
+        if prev_prod is not None and best_extra is None and prod > prev_prod:
+            best_extra = extra
+            if not df.empty:
+                last_piece = format_simulation_df(df.tail(1))
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 20
-    solver.parameters.num_search_workers = 8
+        prev_prod = prod
 
-    status = solver.Solve(model)
+    return pd.DataFrame(rows), best_extra, last_piece
 
-    result = []
 
-    if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-        for i in range(nb_cycles):
-            result.append({
-                "cycle": i,
-                "start": solver.Value(starts[i]),
-                "end": solver.Value(ends[i])
-            })
+def evaluate_mixes(start_time, end_time, base_configs, product_options, send_gap_min, latence_max, deco_gap_min, pause_windows):
+    motifs = {
+        "Actuel": None,
+        "Alterné": [0, 1, 0, 1],
+        "Blocs": [0, 0, 1, 1],
+    }
 
-    return result
+    rows = []
+    for motif_name, motif in motifs.items():
+        cfgs_dict = {}
+
+        for prm_name, base in base_configs.items():
+            arms = base["arms_config"].copy()
+            opts = product_options[prm_name]
+
+            if motif is not None and len(opts) >= 2:
+                for i, arm in enumerate([1, 2, 3, 4]):
+                    arms[arm] = opts[motif[i] % len(opts)]
+
+            cfgs_dict[prm_name] = {
+                **base,
+                "arms_config": arms,
+            }
+
+        cfgs = _build_configs(start_time, end_time, cfgs_dict, send_gap_min, latence_max, deco_gap_min, pause_windows)
+        df = simulate_all(cfgs)
+        if df.empty:
+            continue
+
+        kpis = compute_global_kpis(df, start_time, end_time)
+        rows.append({
+            "Configuration": motif_name,
+            "Production": kpis["production"],
+            "Taux four global (%)": kpis["taux_four_global"],
+            "Latence moy": kpis["latence_moy"],
+        })
+
+    return (
+        pd.DataFrame(rows).sort_values(["Production", "Taux four global (%)"], ascending=False).reset_index(drop=True)
+        if rows else pd.DataFrame()
+    )
