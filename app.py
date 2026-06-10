@@ -4,58 +4,133 @@ import plotly.express as px
 
 from config import (
     DEFAULT_CYCLE_TIMES,
-    DEFAULT_END_TIME,
-    DEFAULT_START_TIMES,
     DEFAULT_DECO_GAP,
+    DEFAULT_END_TIME,
+    DEFAULT_FIRST_ARMS,
     DEFAULT_LATENCE_MAX,
     DEFAULT_SEND_GAP,
-    DEFAULT_FIRST_ARMS,
+    DEFAULT_START_TIMES,
+    PRM_LABELS,
 )
 from simulation import (
     PRMSimulationConfig,
-    simulate_all,
-    format_simulation_df,
     build_gantt_source,
-    compute_global_kpis,
+    compute_prm_kpis,
+    format_simulation_df,
+    simulate_prm,
 )
-from optimizer import evaluate_scenarios, evaluate_overtime, evaluate_mixes
+from optimizer import evaluate_mixes, evaluate_overtime, evaluate_scenarios
 from exports import build_excel_bytes
 
 st.set_page_config(page_title="Simulateur P10", layout="wide")
 
 
 def minutes_to_hhmm(m: int) -> str:
-    return f"{int(m//60):02d}:{int(m%60):02d}"
+    return f"{int(m // 60):02d}:{int(m % 60):02d}"
 
 
 def get_start_time(jour: str) -> int:
     return DEFAULT_START_TIMES["Lundi"] if jour == "Lundi" else DEFAULT_START_TIMES["Autres jours"]
 
 
-if "cycle_times" not in st.session_state:
+# ----------------------
+# Session state
+# ----------------------
+if "cycle_times_all" not in st.session_state:
     rows = []
     for prm_name, products in DEFAULT_CYCLE_TIMES.items():
         for product, vals in products.items():
-            rows.append({
-                "PRM": prm_name,
-                "Produit": product,
-                "Chauffe": vals["heat"],
-                "Refroidissement": vals["cool"],
-                "Décoffrage": vals["deco"],
-            })
-    st.session_state["cycle_times"] = pd.DataFrame(rows)
+            rows.append(
+                {
+                    "PRM": prm_name,
+                    "Produit": product,
+                    "Chauffe": vals["heat"],
+                    "Refroidissement": vals["cool"],
+                    "Décoffrage": vals["deco"],
+                }
+            )
+    st.session_state["cycle_times_all"] = pd.DataFrame(rows)
 
-for key in ["df_raw", "df_view", "gantt_df", "kpis", "df_scenarios", "best_scenario", "df_ot", "df_mix", "last_piece"]:
+for key in [
+    "df_raw",
+    "df_view",
+    "gantt_df",
+    "kpis",
+    "df_scenarios",
+    "best_scenario",
+    "df_ot",
+    "df_mix",
+    "last_piece",
+    "selected_prm",
+]:
     st.session_state.setdefault(key, None)
 
+
+# ----------------------
+# Helpers
+# ----------------------
+def cycle_times_from_editor(df_editor: pd.DataFrame):
+    out = {}
+    for prm_name, group in df_editor.groupby("PRM"):
+        out[prm_name] = {}
+        for _, row in group.iterrows():
+            out[prm_name][row["Produit"]] = {
+                "heat": int(row["Chauffe"]),
+                "cool": int(row["Refroidissement"]),
+                "deco": int(row["Décoffrage"]),
+            }
+    return out
+
+
+def update_selected_cycle_times(prm_name: str, edited_selected: pd.DataFrame):
+    current = st.session_state["cycle_times_all"].copy()
+    current = current[current["PRM"] != prm_name]
+    merged = pd.concat([current, edited_selected], ignore_index=True)
+    st.session_state["cycle_times_all"] = merged
+
+
+def build_prm_form(prm_name: str, available_products, default_first_arm: int):
+    st.markdown(f"### Paramètres {PRM_LABELS[prm_name]}")
+    first_arm = st.selectbox(
+        f"Premier bras {PRM_LABELS[prm_name]}",
+        [1, 2, 3, 4],
+        index=[1, 2, 3, 4].index(default_first_arm),
+        key=f"first_arm_{prm_name}",
+    )
+
+    st.caption("Affectation produit / bras")
+    cols = st.columns(4)
+    arms_config = {}
+    for arm in [1, 2, 3, 4]:
+        with cols[arm - 1]:
+            default_index = min(arm - 1, len(available_products) - 1) if available_products else 0
+            arms_config[arm] = st.selectbox(
+                f"Bras {arm}",
+                available_products,
+                key=f"{prm_name}_arm_{arm}",
+                index=default_index,
+            )
+    return first_arm, arms_config
+
+
+# ----------------------
+# Sidebar
+# ----------------------
 st.title("Simulateur et optimisation de la ligne P10")
 
 with st.sidebar:
+    st.header("Périmètre")
+    selected_prm = st.radio(
+        "Choisir le four / la PRM",
+        ["PRM4500-1", "PRM4500-2"],
+        format_func=lambda x: PRM_LABELS[x],
+    )
+    st.session_state["selected_prm"] = selected_prm
+
     st.header("Paramètres journée")
     jour = st.selectbox("Type de journée", ["Lundi", "Autres jours"])
     start_time = get_start_time(jour)
     end_time = DEFAULT_END_TIME
-
     st.caption(f"Début : {minutes_to_hhmm(start_time)} | Fin max : {minutes_to_hhmm(end_time)}")
 
     latence_max = st.slider("Latence max (min)", 0, 30, DEFAULT_LATENCE_MAX)
@@ -76,225 +151,159 @@ with st.sidebar:
 
     pause_windows = []
     if pause_midi_active:
-        pause_windows.append((pause_midi_start.hour * 60 + pause_midi_start.minute,
-                              pause_midi_end.hour * 60 + pause_midi_end.minute))
+        pause_windows.append((pause_midi_start.hour * 60 + pause_midi_start.minute, pause_midi_end.hour * 60 + pause_midi_end.minute))
     if pause_pm_active:
-        pause_windows.append((pause_pm_start.hour * 60 + pause_pm_start.minute,
-                              pause_pm_end.hour * 60 + pause_pm_end.minute))
+        pause_windows.append((pause_pm_start.hour * 60 + pause_pm_start.minute, pause_pm_end.hour * 60 + pause_pm_end.minute))
 
+
+# ----------------------
+# Tabs
+# ----------------------
 tab1, tab2, tab3 = st.tabs(["Simulation", "Optimisation", "Table des temps"])
 
 with tab3:
-    st.subheader("Temps de cycle modifiables")
+    st.subheader(f"Temps de cycle – {PRM_LABELS[selected_prm]}")
+    full_df = st.session_state["cycle_times_all"].copy()
+    selected_df = full_df[full_df["PRM"] == selected_prm].reset_index(drop=True)
+
     edited = st.data_editor(
-        st.session_state["cycle_times"],
+        selected_df,
         num_rows="dynamic",
         use_container_width=True,
-        key="cycle_times_editor",
+        key=f"cycle_times_editor_{selected_prm}",
         column_config={
             "Chauffe": st.column_config.NumberColumn(min_value=1, step=1),
             "Refroidissement": st.column_config.NumberColumn(min_value=1, step=1),
             "Décoffrage": st.column_config.NumberColumn(min_value=1, step=1),
         },
     )
-    st.session_state["cycle_times"] = edited.copy()
-
-
-def cycle_times_from_editor(df_editor: pd.DataFrame):
-    out = {}
-    for prm_name, group in df_editor.groupby("PRM"):
-        out[prm_name] = {}
-        for _, row in group.iterrows():
-            out[prm_name][row["Produit"]] = {
-                "heat": int(row["Chauffe"]),
-                "cool": int(row["Refroidissement"]),
-                "deco": int(row["Décoffrage"]),
-            }
-    return out
-
-
-def build_prm_form(prm_name: str, available_products, default_first_arm: int):
-    st.markdown(f"### {prm_name}")
-    c1, c2 = st.columns([1, 2])
-
-    with c1:
-        first_arm = st.selectbox(
-            f"Premier bras {prm_name}",
-            [1, 2, 3, 4],
-            index=[1, 2, 3, 4].index(default_first_arm),
-            key=f"first_arm_{prm_name}"
-        )
-
-    with c2:
-        st.caption("Affectation produit / bras")
-
-    cols = st.columns(4)
-    arms_config = {}
-    for arm in [1, 2, 3, 4]:
-        with cols[arm - 1]:
-            arms_config[arm] = st.selectbox(
-                f"Bras {arm}",
-                available_products,
-                key=f"{prm_name}_arm_{arm}",
-                index=min(arm - 1, len(available_products) - 1)
-            )
-
-    return first_arm, arms_config
+    update_selected_cycle_times(selected_prm, edited.copy())
 
 
 with tab1:
-    st.header("Simulation")
-    ct = cycle_times_from_editor(st.session_state["cycle_times"])
+    st.header(f"Simulation – {PRM_LABELS[selected_prm]}")
 
-    xperco_products = list(ct.get("PRM4500-1", {}).keys())
-    oxy_products = list(ct.get("PRM4500-2", {}).keys())
+    cycle_times_all = cycle_times_from_editor(st.session_state["cycle_times_all"])
+    available_products = list(cycle_times_all.get(selected_prm, {}).keys())
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        first_arm_xperco, xperco_arms = build_prm_form("PRM4500-1", xperco_products, DEFAULT_FIRST_ARMS["PRM4500-1"])
-    with col_b:
-        first_arm_oxy, oxy_arms = build_prm_form("PRM4500-2", oxy_products, DEFAULT_FIRST_ARMS["PRM4500-2"])
+    if not available_products:
+        st.warning("Aucun produit défini pour cette PRM dans la table des temps.")
+    else:
+        first_arm, arms_config = build_prm_form(selected_prm, available_products, DEFAULT_FIRST_ARMS[selected_prm])
 
-    if st.button("Lancer la simulation", type="primary"):
-        cfgs = [
-            PRMSimulationConfig(
-                prm_name="PRM4500-1",
+        if st.button("Lancer la simulation", type="primary"):
+            cfg = PRMSimulationConfig(
+                prm_name=selected_prm,
                 start_time=start_time,
                 end_time=end_time,
-                arms_config=xperco_arms,
-                cycle_times=ct["PRM4500-1"],
-                first_arm=first_arm_xperco,
+                arms_config=arms_config,
+                cycle_times=cycle_times_all[selected_prm],
+                first_arm=first_arm,
                 send_gap_min=send_gap_min,
                 latence_max=latence_max,
                 deco_gap_min=deco_gap_min,
                 pause_windows=pause_windows,
-            ),
-            PRMSimulationConfig(
-                prm_name="PRM4500-2",
-                start_time=start_time,
-                end_time=end_time,
-                arms_config=oxy_arms,
-                cycle_times=ct["PRM4500-2"],
-                first_arm=first_arm_oxy,
-                send_gap_min=send_gap_min,
-                latence_max=latence_max,
-                deco_gap_min=deco_gap_min,
-                pause_windows=pause_windows,
-            ),
-        ]
+            )
+            df_raw = simulate_prm(cfg)
+            df_view = format_simulation_df(df_raw)
+            gantt_df = build_gantt_source(df_raw)
+            kpis = compute_prm_kpis(df_raw, start_time, end_time)
 
-        df_raw = simulate_all(cfgs)
-        df_view = format_simulation_df(df_raw)
-        gantt_df = build_gantt_source(df_raw)
-        kpis = compute_global_kpis(df_raw, start_time, end_time)
+            st.session_state["df_raw"] = df_raw
+            st.session_state["df_view"] = df_view
+            st.session_state["gantt_df"] = gantt_df
+            st.session_state["kpis"] = kpis
+            st.session_state["selected_prm"] = selected_prm
 
-        st.session_state["df_raw"] = df_raw
-        st.session_state["df_view"] = df_view
-        st.session_state["gantt_df"] = gantt_df
-        st.session_state["kpis"] = kpis
+        if st.session_state["df_view"] is not None and st.session_state["selected_prm"] == selected_prm:
+            kpis = st.session_state["kpis"]
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Production totale", kpis["production"])
+            col2.metric("Taux four (%)", kpis["taux_four"])
+            col3.metric("Latence moyenne (min)", kpis["latence_moy"])
+            col4.metric("Latence max observée (min)", kpis["latence_max_obs"])
 
-    if st.session_state["df_view"] is not None:
-        kpis = st.session_state["kpis"]
+            st.subheader("Production par produit")
+            st.write(kpis["par_produit"])
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Production totale", kpis["production"])
-        col2.metric("Taux four global (%)", kpis["taux_four_global"])
-        col3.metric("Latence moyenne (min)", kpis["latence_moy"])
-        col4.metric("Latence max observée (min)", kpis["latence_max_obs"])
+            st.subheader("Détail simulation")
+            st.dataframe(st.session_state["df_view"], use_container_width=True)
 
-        st.subheader("Production par PRM")
-        st.write(kpis["par_prm"])
+            st.subheader("Diagramme de Gantt")
+            fig = px.timeline(
+                st.session_state["gantt_df"],
+                x_start="Start",
+                x_end="Finish",
+                y="Task",
+                color="Type",
+                color_discrete_map={
+                    "Four": "green",
+                    "Refroidissement": "blue",
+                    "Déco": "purple",
+                    "LATENCE": "red",
+                },
+            )
+            fig.update_yaxes(autorange="reversed")
+            fig.update_layout(xaxis=dict(tickformat="%H:%M"))
+            st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("Production par produit")
-        st.write(kpis["par_produit"])
-
-        st.subheader("Détail simulation")
-        st.dataframe(st.session_state["df_view"], use_container_width=True)
-
-        st.subheader("Diagramme de Gantt")
-        fig = px.timeline(
-            st.session_state["gantt_df"],
-            x_start="Start",
-            x_end="Finish",
-            y="Task",
-            color="Type",
-            color_discrete_map={
-                "Four": "green",
-                "Refroidissement": "blue",
-                "Déco": "purple",
-                "LATENCE": "red",
-            },
-        )
-        fig.update_yaxes(autorange="reversed")
-        fig.update_layout(xaxis=dict(tickformat="%H:%M"))
-        st.plotly_chart(fig, use_container_width=True)
-
-        excel_bytes = build_excel_bytes(
-            simulation_df=st.session_state["df_view"],
-            scenarios_df=st.session_state["df_scenarios"],
-            overtime_df=st.session_state["df_ot"],
-            mix_df=st.session_state["df_mix"],
-            cycle_times_df=st.session_state["cycle_times"],
-        )
-        st.download_button(
-            "Télécharger Excel",
-            data=excel_bytes,
-            file_name="simulation_p10.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+            excel_bytes = build_excel_bytes(
+                simulation_df=st.session_state["df_view"],
+                scenarios_df=st.session_state["df_scenarios"],
+                overtime_df=st.session_state["df_ot"],
+                mix_df=st.session_state["df_mix"],
+                cycle_times_df=st.session_state["cycle_times_all"],
+            )
+            st.download_button(
+                "Télécharger Excel",
+                data=excel_bytes,
+                file_name=f"simulation_{selected_prm}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
 with tab2:
-    st.header("Optimisation")
+    st.header(f"Optimisation – {PRM_LABELS[selected_prm]}")
 
-    if st.session_state["df_view"] is None:
-        st.info("Lancez d'abord une simulation pour figer les paramètres de base.")
+    if st.session_state["df_view"] is None or st.session_state["selected_prm"] != selected_prm:
+        st.info("Lancez d'abord une simulation pour cette PRM.")
     else:
         if st.button("Lancer l'optimisation"):
-            ct = cycle_times_from_editor(st.session_state["cycle_times"])
+            cycle_times_all = cycle_times_from_editor(st.session_state["cycle_times_all"])
+            available_products = list(cycle_times_all.get(selected_prm, {}).keys())
 
-            base_configs = {
-                "PRM4500-1": {
-                    "arms_config": {
-                        1: st.session_state.get("PRM4500-1_arm_1", xperco_products[0]),
-                        2: st.session_state.get("PRM4500-1_arm_2", xperco_products[min(1, len(xperco_products)-1)]),
-                        3: st.session_state.get("PRM4500-1_arm_3", xperco_products[min(2, len(xperco_products)-1)]),
-                        4: st.session_state.get("PRM4500-1_arm_4", xperco_products[min(0, len(xperco_products)-1)]),
-                    },
-                    "cycle_times": ct["PRM4500-1"],
-                    "first_arm": st.session_state.get("first_arm_PRM4500-1", DEFAULT_FIRST_ARMS["PRM4500-1"]),
+            base_config = {
+                "arms_config": {
+                    1: st.session_state.get(f"{selected_prm}_arm_1", available_products[0]),
+                    2: st.session_state.get(f"{selected_prm}_arm_2", available_products[min(1, len(available_products)-1)]),
+                    3: st.session_state.get(f"{selected_prm}_arm_3", available_products[min(2, len(available_products)-1)]),
+                    4: st.session_state.get(f"{selected_prm}_arm_4", available_products[min(3, len(available_products)-1)]),
                 },
-                "PRM4500-2": {
-                    "arms_config": {
-                        1: st.session_state.get("PRM4500-2_arm_1", oxy_products[0]),
-                        2: st.session_state.get("PRM4500-2_arm_2", oxy_products[min(1, len(oxy_products)-1)]),
-                        3: st.session_state.get("PRM4500-2_arm_3", oxy_products[min(0, len(oxy_products)-1)]),
-                        4: st.session_state.get("PRM4500-2_arm_4", oxy_products[min(1, len(oxy_products)-1)]),
-                    },
-                    "cycle_times": ct["PRM4500-2"],
-                    "first_arm": st.session_state.get("first_arm_PRM4500-2", DEFAULT_FIRST_ARMS["PRM4500-2"]),
-                },
+                "cycle_times": cycle_times_all[selected_prm],
+                "first_arm": st.session_state.get(f"first_arm_{selected_prm}", DEFAULT_FIRST_ARMS[selected_prm]),
             }
 
             df_scenarios, best = evaluate_scenarios(
+                prm_name=selected_prm,
                 start_time=start_time,
                 end_time=end_time,
-                base_configs=base_configs,
+                base_config=base_config,
                 send_gap_values=[max(1, send_gap_min - 5), send_gap_min, send_gap_min + 5],
                 latence_values=list(range(max(0, latence_max - 3), latence_max + 4)),
                 deco_gap_values=[max(0, deco_gap_min - 2), deco_gap_min, deco_gap_min + 2],
                 pause_sets=[
                     ("Sans pause", []),
-                    ("Midi", [(12*60, 13*60)]),
-                    ("Midi+PM", [(12*60, 13*60), (15*60, 15*60+15)]),
+                    ("Midi", [(12 * 60, 13 * 60)]),
+                    ("Midi+PM", [(12 * 60, 13 * 60), (15 * 60, 15 * 60 + 15)]),
                 ],
             )
             st.session_state["df_scenarios"] = df_scenarios
             st.session_state["best_scenario"] = best
 
             df_ot, best_extra, last_piece = evaluate_overtime(
+                prm_name=selected_prm,
                 start_time=start_time,
                 end_time=end_time,
-                base_configs=base_configs,
+                base_config=base_config,
                 send_gap_min=send_gap_min,
                 latence_max=latence_max,
                 deco_gap_min=deco_gap_min,
@@ -304,16 +313,12 @@ with tab2:
             st.session_state["df_ot"] = df_ot
             st.session_state["last_piece"] = last_piece
 
-            product_options = {
-                "PRM4500-1": list(ct["PRM4500-1"].keys()),
-                "PRM4500-2": list(ct["PRM4500-2"].keys()),
-            }
-
             df_mix = evaluate_mixes(
+                prm_name=selected_prm,
                 start_time=start_time,
                 end_time=end_time,
-                base_configs=base_configs,
-                product_options=product_options,
+                base_config=base_config,
+                product_options=available_products,
                 send_gap_min=send_gap_min,
                 latence_max=latence_max,
                 deco_gap_min=deco_gap_min,
@@ -324,19 +329,15 @@ with tab2:
         if st.session_state["df_scenarios"] is not None:
             st.subheader("Scénarios")
             st.dataframe(st.session_state["df_scenarios"], use_container_width=True)
-
             best = st.session_state["best_scenario"]
             if best:
                 st.success(
-                    f"Meilleur scénario : {best['Scenario']} | "
-                    f"Production {best['Production']} | "
-                    f"Latence moy {best['Latence moy']} | "
-                    f"Taux four {best['Taux four global (%)']}%"
+                    f"Meilleur scénario : {best['Scenario']} | Production {best['Production']} | "
+                    f"Latence moy {best['Latence moy']} | Taux four {best['Taux four (%)']}%"
                 )
-
                 fig = px.scatter(
                     st.session_state["df_scenarios"],
-                    x="Taux four global (%)",
+                    x="Taux four (%)",
                     y="Production",
                     color="Pause",
                     hover_data=["Latence max", "Send gap", "Déco gap"],
@@ -346,7 +347,6 @@ with tab2:
         if st.session_state["df_ot"] is not None:
             st.subheader("Overtime intelligent")
             st.dataframe(st.session_state["df_ot"], use_container_width=True)
-
             if st.session_state["last_piece"] is not None:
                 st.subheader("Dernière pièce ajoutée")
                 st.dataframe(st.session_state["last_piece"], use_container_width=True)
