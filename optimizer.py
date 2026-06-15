@@ -18,16 +18,7 @@ def _score(kpis: dict) -> float:
     )
 
 
-def _build_config(
-    prm_name,
-    start_time,
-    end_time,
-    base_config,
-    send_gap_min,
-    latence_max,
-    deco_gap_min,
-    pause_windows,
-):
+def _build_config(prm_name, start_time, end_time, base_config, send_gap_min, latence_max, deco_gap_min, pause_windows):
     return PRMSimulationConfig(
         prm_name=prm_name,
         start_time=start_time,
@@ -42,16 +33,7 @@ def _build_config(
     )
 
 
-def evaluate_scenarios(
-    prm_name,
-    start_time,
-    end_time,
-    base_config,
-    send_gap_values,
-    latence_values,
-    deco_gap_values,
-    pause_sets,
-):
+def evaluate_scenarios(prm_name, start_time, end_time, base_config, send_gap_values, latence_values, deco_gap_values, pause_sets):
     records = []
     best = None
     best_score = float("-inf")
@@ -75,17 +57,45 @@ def evaluate_scenarios(
 
         try:
             df = simulate_prm(cfg)
-        except ScenarioInfeasibleError:
+        except ScenarioInfeasibleError as e:
+            records.append({
+                "Scenario": f"{pause_name} | lat {lat}",
+                "Pause": pause_name,
+                "Send gap": send_gap,
+                "Latence max": lat,
+                "Déco gap": deco_gap,
+                "Production": 0,
+                "Taux four (%)": 0,
+                "Latence moy": None,
+                "Latence max observée": None,
+                "Score": None,
+                "Statut": "Infaisable",
+                "Raison": str(e),
+            })
             continue
 
         if df.empty:
+            records.append({
+                "Scenario": f"{pause_name} | lat {lat}",
+                "Pause": pause_name,
+                "Send gap": send_gap,
+                "Latence max": lat,
+                "Déco gap": deco_gap,
+                "Production": 0,
+                "Taux four (%)": 0,
+                "Latence moy": None,
+                "Latence max observée": None,
+                "Score": None,
+                "Statut": "Infaisable",
+                "Raison": "Aucune pièce ne peut être planifiée dans la journée.",
+            })
             continue
 
         kpis = compute_prm_kpis(df, start_time, end_time)
         score = round(_score(kpis), 2)
 
         record = {
-            "Scenario": f"{pause_name} | send {send_gap} | lat {lat} | deco {deco_gap}",
+            "Scenario": f"{pause_name} | lat {lat}",
             "Pause": pause_name,
             "Send gap": send_gap,
             "Latence max": lat,
@@ -95,6 +105,8 @@ def evaluate_scenarios(
             "Latence moy": kpis["latence_moy"],
             "Latence max observée": kpis["latence_max_obs"],
             "Score": score,
+            "Statut": "Faisable",
+            "Raison": "",
         }
         records.append(record)
 
@@ -104,22 +116,17 @@ def evaluate_scenarios(
 
     df_records = pd.DataFrame(records)
     if not df_records.empty:
-        df_records = df_records.sort_values("Score", ascending=False).reset_index(drop=True)
+        df_records["ordre_statut"] = df_records["Statut"].map({"Faisable": 0, "Infaisable": 1})
+        df_records = df_records.sort_values(
+            by=["ordre_statut", "Score"],
+            ascending=[True, False],
+            na_position="last",
+        ).drop(columns=["ordre_statut"]).reset_index(drop=True)
 
     return df_records, best
 
 
-def evaluate_overtime(
-    prm_name,
-    start_time,
-    end_time,
-    base_config,
-    send_gap_min,
-    latence_max,
-    deco_gap_min,
-    pause_windows,
-    overtime_values,
-):
+def evaluate_overtime(prm_name, start_time, end_time, base_config, send_gap_min, latence_max, deco_gap_min, pause_windows, overtime_values):
     rows = []
     best_extra = None
     last_piece = None
@@ -155,17 +162,7 @@ def evaluate_overtime(
     return pd.DataFrame(rows), best_extra, last_piece
 
 
-def evaluate_mixes(
-    prm_name,
-    start_time,
-    end_time,
-    base_config,
-    product_options,
-    send_gap_min,
-    latence_max,
-    deco_gap_min,
-    pause_windows,
-):
+def evaluate_mixes(prm_name, start_time, end_time, base_config, product_options, send_gap_min, latence_max, deco_gap_min, pause_windows):
     motifs = {
         "Actuel": None,
         "Alterné": [0, 1, 0, 1],
@@ -173,7 +170,6 @@ def evaluate_mixes(
     }
 
     rows = []
-
     for motif_name, motif in motifs.items():
         arms = base_config["arms_config"].copy()
 
@@ -203,14 +199,12 @@ def evaluate_mixes(
             continue
 
         kpis = compute_prm_kpis(df, start_time, end_time)
-        rows.append(
-            {
-                "Configuration": motif_name,
-                "Production": kpis["production"],
-                "Taux four (%)": kpis["taux_four"],
-                "Latence moy": kpis["latence_moy"],
-            }
-        )
+        rows.append({
+            "Configuration": motif_name,
+            "Production": kpis["production"],
+            "Taux four (%)": kpis["taux_four"],
+            "Latence moy": kpis["latence_moy"],
+        })
 
     df_rows = pd.DataFrame(rows)
     if not df_rows.empty:
