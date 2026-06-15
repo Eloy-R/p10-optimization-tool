@@ -5,6 +5,16 @@ import copy
 import pandas as pd
 
 
+class ScenarioInfeasibleError(Exception):
+    """
+    Exception métier levée lorsqu'aucun planning ne permet
+    de respecter la latence maximale ou la fin de journée.
+    """
+    def __init__(self, message: str, details: Optional[dict] = None):
+        super().__init__(message)
+        self.details = details or {}
+
+
 def format_time(minutes: int) -> str:
     return f"{int(minutes // 60):02d}:{int(minutes % 60):02d}"
 
@@ -19,19 +29,103 @@ def normalize_arm_order(first_arm: int) -> List[int]:
     return arms[idx:] + arms[:idx]
 
 
-def apply_pause_windows(start_op: int, duration: int, pause_windows: List[Tuple[int, int]]) -> Tuple[int, Optional[str]]:
+def apply_pause_windows(
+    start_op: int,
+    duration: int,
+    pause_windows: List[Tuple[int, int]],
+) -> Tuple[int, Optional[str]]:
+    """
+    Si une opération démarre pendant une pause ou la chevauche,
+    son début est reporté à la fin de la pause.
+    """
     reason = None
     changed = True
+
     while changed:
         changed = False
         end_temp = start_op + duration
+
         for p_start, p_end in sorted(pause_windows):
-            if p_start <= start_op < p_end or (start_op < p_start < end_temp):
+            if p_start <= start_op < p_end:
                 start_op = p_end
                 reason = "Pause"
                 changed = True
                 break
+
+            if start_op < p_start < end_temp:
+                start_op = p_end
+                reason = "Pause"
+                changed = True
+                break
+
     return start_op, reason
+
+
+def build_infeasibility_reason(
+    piece: dict,
+    latence_max: int,
+    send_gap_min: int,
+    deco_gap_min: int,
+    pending_count: int,
+    end_time: Optional[int] = None,
+) -> str:
+    """
+    Construit un message métier lisible expliquant pourquoi le scénario est infaisable.
+    """
+    lines = []
+
+    latence = piece.get("latence")
+    cool_finish = piece.get("cool_finish")
+    start_deco = piece.get("start_deco")
+    end_deco = piece.get("end_deco")
+    product = piece.get("product", "?")
+    arm = piece.get("arm", "?")
+    pause_reason = piece.get("pause_reason", "")
+
+    if latence is not None:
+        lines.append(
+            f"Latence projetée = {latence} min > limite = {latence_max} min."
+        )
+
+    lines.append(f"Pièce concernée : bras {arm} - {product}.")
+
+    if cool_finish is not None:
+        lines.append(f"Fin refroidissement prévue : {format_time(cool_finish)}.")
+    if start_deco is not None:
+        lines.append(f"Début déco projeté : {format_time(start_deco)}.")
+    if end_deco is not None and end_time is not None and end_deco > end_time:
+        lines.append(
+            f"La pièce finirait son décoffrage à {format_time(end_deco)}, "
+            f"au-delà de la fin de journée autorisée ({format_time(end_time)})."
+        )
+
+    causes = []
+    if pending_count > 0:
+        causes.append(f"poste déco déjà chargé avec {pending_count} pièce(s) avant celle-ci")
+    if pause_reason:
+        causes.append("pause active qui décale le démarrage du décoffrage")
+    if deco_gap_min > 0:
+        causes.append(f"marge de sécurité entre décos = {deco_gap_min} min")
+    if send_gap_min <= 10:
+        causes.append(f"cadence d'envoi au four très agressive ({send_gap_min} min)")
+    elif send_gap_min <= 15:
+        causes.append(f"cadence d'envoi au four soutenue ({send_gap_min} min)")
+
+    if causes:
+        lines.append("Cause probable : " + " + ".join(causes) + ".")
+
+    suggestions = [
+        "augmenter le temps entre envois au four",
+        "réduire la marge entre deux décoffrages",
+        "desserrer la contrainte de latence",
+    ]
+
+    if pause_reason:
+        suggestions.append("tester un autre scénario de pauses")
+
+    lines.append("Suggestion : " + ", ".join(suggestions) + ".")
+
+    return "\n".join(lines)
 
 
 @dataclass
@@ -56,6 +150,9 @@ def _schedule_pending(
     deco_gap_min: int,
     pause_windows: List[Tuple[int, int]],
 ):
+    """
+    Replanifie toute la file d'attente avant déco/coffrage.
+    """
     ordered = sorted(pending, key=lambda x: (x["cool_finish"], x["arm"], x["cycle"]))
     current = deco_available
     scheduled = []
@@ -80,46 +177,44 @@ def _schedule_pending(
 
 def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
     """
-    Version corrigée orientée métier :
-    - la latence max devient une CONTRAINTE DURE
-    - si une pièce projetée dépasse la latence max, l'entrée au four est retardée jusqu'à respecter la limite
-    - 2 zones de refroidissement modélisées comme 2 capacités de refroidissement parallèles (tampons)
-
-    Remarque importante :
-    le détail spatial Z1 -> Z2 reste simplifié pour cette version.
-    L'objectif prioritaire ici est de faire respecter la règle métier de latence.
+    Simulation orientée métier :
+    - une seule PRM
+    - latence max = contrainte dure
+    - 2 capacités de refroidissement simplifiées (Z1, Z2)
+    - si la latence projetée dépasse la limite, l'entrée au four est retardée
     """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
 
-    # disponibilité des bras après décoffrage
+    # disponibilité des bras après déco
     arm_available = {arm: config.start_time for arm in config.arms_config}
 
-    # disponibilité des 2 zones de refroidissement (capacités parallèles)
+    # disponibilité des 2 zones de refroidissement
     cool_slots = {
         "Z1": config.start_time,
         "Z2": config.start_time,
     }
 
-    # poste déco/coffrage unique
+    # disponibilité du poste déco/coffrage
     deco_available = config.start_time
 
     # envoi vers le four
     next_send_time = config.start_time
 
-    pending = []   # pièces en attente de déco (cool fini ou pas encore fini)
+    pending = []
     results = []
 
     def project_piece(start_four: int, arm: int, product: str, cycle: int):
         data = config.cycle_times[product]
-        heat = data["heat"] + (config.extra_first_cycles if cycle < config.extra_first_cycles_count else 0)
+        heat = data["heat"] + (
+            config.extra_first_cycles if cycle < config.extra_first_cycles_count else 0
+        )
         cool = data["cool"]
         deco = data["deco"]
 
         end_four = start_four + heat
 
-        # Choix du slot de refroidissement le plus tôt disponible
-        # priorité à Z2 si libre à la minute de sortie four, sinon Z1, sinon le premier slot qui se libère
+        # priorité à Z2 si libre, sinon Z1, sinon premier slot libéré
         if cool_slots["Z2"] <= end_four:
             chosen_zone = "Z2"
             cool_start = end_four
@@ -152,21 +247,38 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         return projected
 
     cycle = 0
+
     while True:
         arm = arm_order[cycle % len(arm_order)]
         product = config.arms_config[arm]
 
-        # Planifier tout ce qui est déjà en attente avec l'état actuel
+        # Vérification de la file actuelle
         pending_schedule = _schedule_pending(
-            pending, deco_available, config.deco_gap_min, pause_windows
+            pending,
+            deco_available,
+            config.deco_gap_min,
+            pause_windows,
         )
 
-        # Sécuriser l'invariant : aucune pièce déjà pendante ne doit déjà violer la contrainte
-        if pending_schedule and max(x["latence"] for x in pending_schedule) > config.latence_max:
-            raise RuntimeError(
-                f"La file d'attente existante dépasse déjà la latence max ({config.latence_max} min). "
-                f"Réduisez le temps entre envois, augmentez la latence max ou la marge opératoire."
-            )
+        if pending_schedule:
+            worst_existing = max(pending_schedule, key=lambda x: x["latence"])
+            if worst_existing["latence"] > config.latence_max:
+                msg = build_infeasibility_reason(
+                    piece=worst_existing,
+                    latence_max=config.latence_max,
+                    send_gap_min=config.send_gap_min,
+                    deco_gap_min=config.deco_gap_min,
+                    pending_count=max(0, len(pending_schedule) - 1),
+                    end_time=config.end_time,
+                )
+                raise ScenarioInfeasibleError(
+                    msg,
+                    details={
+                        "type": "latence_queue",
+                        "piece": worst_existing,
+                        "latence_max": config.latence_max,
+                    },
+                )
 
         raw_start_four = max(next_send_time, arm_available[arm])
 
@@ -174,49 +286,71 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         start_four = raw_start_four
         found = False
         guard = 0
+        last_candidate_scheduled = None
 
         while guard < 2000:
             candidate = project_piece(start_four, arm, product, cycle)
             trial_pending = pending + [candidate]
             trial_schedule = _schedule_pending(
-                trial_pending, deco_available, config.deco_gap_min, pause_windows
+                trial_pending,
+                deco_available,
+                config.deco_gap_min,
+                pause_windows,
             )
 
-            candidate_scheduled = next(
+            last_candidate_scheduled = next(
                 x for x in trial_schedule
                 if x["cycle"] == candidate["cycle"] and x["arm"] == arm
             )
 
             if (
-                candidate_scheduled["latence"] <= config.latence_max
-                and candidate_scheduled["end_deco"] <= config.end_time
+                last_candidate_scheduled["latence"] <= config.latence_max
+                and last_candidate_scheduled["end_deco"] <= config.end_time
             ):
                 found = True
                 break
 
-            # on décale au moins du dépassement observé, sinon de 1 minute
-            delay = max(1, candidate_scheduled["latence"] - config.latence_max)
+            delay = max(1, last_candidate_scheduled["latence"] - config.latence_max)
             start_four += delay
             guard += 1
 
         if not found:
-            break
+            msg = build_infeasibility_reason(
+                piece=last_candidate_scheduled if last_candidate_scheduled else {
+                    "product": product,
+                    "arm": arm,
+                },
+                latence_max=config.latence_max,
+                send_gap_min=config.send_gap_min,
+                deco_gap_min=config.deco_gap_min,
+                pending_count=max(0, len(pending)),
+                end_time=config.end_time,
+            )
+            raise ScenarioInfeasibleError(
+                msg,
+                details={
+                    "type": "no_feasible_start",
+                    "piece": last_candidate_scheduled,
+                    "latence_max": config.latence_max,
+                },
+            )
 
-        # Si le four finit après la fin de journée, on stoppe
         if candidate["end_four"] > config.end_time:
             break
 
-        # On engage réellement la pièce
+        # engager la pièce
         pending.append(candidate)
         cool_slots[candidate["chosen_zone"]] = candidate["cool_finish"]
         next_send_time = start_four + config.send_gap_min
 
-        # Replanifier et sortir toutes les pièces devenues fermes avant le prochain envoi
+        # sortir les pièces déjà fermes avant le prochain envoi
         scheduled_all = _schedule_pending(
-            pending, deco_available, config.deco_gap_min, pause_windows
+            pending,
+            deco_available,
+            config.deco_gap_min,
+            pause_windows,
         )
 
-        # On fige les pièces qui commencent leur déco avant ou à next_send_time
         still_pending = []
         for s in scheduled_all:
             if s["start_deco"] <= next_send_time and s["end_deco"] <= config.end_time:
@@ -276,7 +410,10 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
 
     # flush final
     final_schedule = _schedule_pending(
-        pending, deco_available, config.deco_gap_min, pause_windows
+        pending,
+        deco_available,
+        config.deco_gap_min,
+        pause_windows,
     )
 
     for s in final_schedule:
