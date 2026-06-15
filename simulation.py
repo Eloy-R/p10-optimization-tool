@@ -178,3 +178,83 @@ def format_simulation_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df.copy()
 
+    out = df.copy()
+    mapping = [
+        ("Début Four (min)", "Début Four"),
+        ("Fin Four (min)", "Fin Four"),
+        ("Début Refroidissement (min)", "Début Refroidissement"),
+        ("Fin Refroidissement (min)", "Fin Refroidissement"),
+        ("Début Déco (min)", "Début Déco"),
+        ("Fin Déco (min)", "Fin Déco"),
+    ]
+    for c_in, c_out in mapping:
+        out[c_out] = out[c_in].apply(format_time)
+
+    ordered = [
+        "PRM", "Bras", "Produit", "Début Four", "Fin Four",
+        "Début Refroidissement", "Fin Refroidissement", "Début Déco", "Fin Déco",
+        "Latence (min)", "Attente avant four (min)", "Attente avant déco (min)",
+        "Temps zone 1 (min)", "Temps zone 2 (min)", "Chemin refroidissement",
+        "Motif décalage", "Cycle",
+    ]
+    return out[ordered]
+
+
+def build_gantt_source(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    tasks = []
+    for _, row in df.iterrows():
+        label = f"{row['PRM']} - B{row['Bras']} - {row['Produit']}"
+        tasks.extend([
+            {
+                "Task": label,
+                "Start": to_datetime(row["Début Four (min)"]),
+                "Finish": to_datetime(row["Fin Four (min)"]),
+                "Type": "Four",
+            },
+            {
+                "Task": label,
+                "Start": to_datetime(row["Début Refroidissement (min)"]),
+                "Finish": to_datetime(row["Fin Refroidissement (min)"]),
+                "Type": "Refroidissement",
+            },
+            {
+                "Task": label,
+                "Start": to_datetime(row["Début Déco (min)"]),
+                "Finish": to_datetime(row["Fin Déco (min)"]),
+                "Type": "Déco",
+            },
+        ])
+        if row["Latence (min)"] > 0:
+            tasks.append({
+                "Task": label,
+                "Start": to_datetime(row["Fin Refroidissement (min)"]),
+                "Finish": to_datetime(row["Début Déco (min)"]),
+                "Type": "LATENCE",
+            })
+    return pd.DataFrame(tasks)
+
+
+def compute_prm_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dict:
+    if df.empty:
+        return {
+            "production": 0,
+            "taux_four": 0.0,
+            "latence_moy": 0.0,
+            "latence_max_obs": 0.0,
+            "par_produit": {},
+        }
+
+    total_available = max(1, end_time - start_time)
+    total_four = (df["Fin Four (min)"] - df["Début Four (min)"]).sum()
+    taux_four = (total_four / total_available) * 100
+
+    return {
+        "production": int(len(df)),
+        "taux_four": round(taux_four, 1),
+        "latence_moy": round(df["Latence (min)"].mean(), 2),
+        "latence_max_obs": round(df["Latence (min)"].max(), 2),
+        "par_produit": df["Produit"].value_counts().to_dict(),
+    }
