@@ -6,10 +6,6 @@ import pandas as pd
 
 
 class ScenarioInfeasibleError(Exception):
-    """
-    Exception métier levée lorsqu'aucun planning ne permet
-    de respecter la latence maximale ou la fin de journée.
-    """
     def __init__(self, message: str, details: Optional[dict] = None):
         super().__init__(message)
         self.details = details or {}
@@ -34,10 +30,6 @@ def apply_pause_windows(
     duration: int,
     pause_windows: List[Tuple[int, int]],
 ) -> Tuple[int, Optional[str]]:
-    """
-    Si une opération démarre pendant une pause ou la chevauche,
-    son début est reporté à la fin de la pause.
-    """
     reason = None
     changed = True
 
@@ -69,9 +61,6 @@ def build_infeasibility_reason(
     pending_count: int,
     end_time: Optional[int] = None,
 ) -> str:
-    """
-    Construit un message métier lisible expliquant pourquoi le scénario est infaisable.
-    """
     lines = []
 
     latence = piece.get("latence")
@@ -83,9 +72,7 @@ def build_infeasibility_reason(
     pause_reason = piece.get("pause_reason", "")
 
     if latence is not None:
-        lines.append(
-            f"Latence projetée = {latence} min > limite = {latence_max} min."
-        )
+        lines.append(f"Latence projetée = {latence} min > limite = {latence_max} min.")
 
     lines.append(f"Pièce concernée : bras {arm} - {product}.")
 
@@ -119,12 +106,10 @@ def build_infeasibility_reason(
         "réduire la marge entre deux décoffrages",
         "desserrer la contrainte de latence",
     ]
-
     if pause_reason:
         suggestions.append("tester un autre scénario de pauses")
 
     lines.append("Suggestion : " + ", ".join(suggestions) + ".")
-
     return "\n".join(lines)
 
 
@@ -136,7 +121,7 @@ class PRMSimulationConfig:
     arms_config: Dict[int, str]
     cycle_times: Dict[str, Dict[str, int]]
     first_arm: int = 4
-    send_gap_min: int = 20
+    send_gap_min: int = 1
     latence_max: int = 20
     deco_gap_min: int = 5
     pause_windows: Optional[List[Tuple[int, int]]] = None
@@ -150,9 +135,6 @@ def _schedule_pending(
     deco_gap_min: int,
     pause_windows: List[Tuple[int, int]],
 ):
-    """
-    Replanifie toute la file d'attente avant déco/coffrage.
-    """
     ordered = sorted(pending, key=lambda x: (x["cool_finish"], x["arm"], x["cycle"]))
     current = deco_available
     scheduled = []
@@ -176,45 +158,23 @@ def _schedule_pending(
 
 
 def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
-    """
-    Simulation orientée métier :
-    - une seule PRM
-    - latence max = contrainte dure
-    - 2 capacités de refroidissement simplifiées (Z1, Z2)
-    - si la latence projetée dépasse la limite, l'entrée au four est retardée
-    """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
 
-    # disponibilité des bras après déco
     arm_available = {arm: config.start_time for arm in config.arms_config}
-
-    # disponibilité des 2 zones de refroidissement
-    cool_slots = {
-        "Z1": config.start_time,
-        "Z2": config.start_time,
-    }
-
-    # disponibilité du poste déco/coffrage
+    cool_slots = {"Z1": config.start_time, "Z2": config.start_time}
     deco_available = config.start_time
-
-    # envoi vers le four
     next_send_time = config.start_time
-
     pending = []
     results = []
 
     def project_piece(start_four: int, arm: int, product: str, cycle: int):
         data = config.cycle_times[product]
-        heat = data["heat"] + (
-            config.extra_first_cycles if cycle < config.extra_first_cycles_count else 0
-        )
+        heat = data["heat"] + (config.extra_first_cycles if cycle < config.extra_first_cycles_count else 0)
         cool = data["cool"]
         deco = data["deco"]
-
         end_four = start_four + heat
 
-        # priorité à Z2 si libre, sinon Z1, sinon premier slot libéré
         if cool_slots["Z2"] <= end_four:
             chosen_zone = "Z2"
             cool_start = end_four
@@ -227,7 +187,7 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
 
         cool_finish = cool_start + cool
 
-        projected = {
+        return {
             "PRM": config.prm_name,
             "arm": arm,
             "product": product,
@@ -244,7 +204,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             "reason": "",
             "chosen_zone": chosen_zone,
         }
-        return projected
 
     cycle = 0
 
@@ -252,7 +211,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         arm = arm_order[cycle % len(arm_order)]
         product = config.arms_config[arm]
 
-        # Vérification de la file actuelle
         pending_schedule = _schedule_pending(
             pending,
             deco_available,
@@ -281,8 +239,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
                 )
 
         raw_start_four = max(next_send_time, arm_available[arm])
-
-        # Recherche du premier démarrage four qui respecte la latence max en projection
         start_four = raw_start_four
         found = False
         guard = 0
@@ -291,6 +247,7 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         while guard < 2000:
             candidate = project_piece(start_four, arm, product, cycle)
             trial_pending = pending + [candidate]
+
             trial_schedule = _schedule_pending(
                 trial_pending,
                 deco_available,
@@ -338,12 +295,10 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         if candidate["end_four"] > config.end_time:
             break
 
-        # engager la pièce
         pending.append(candidate)
         cool_slots[candidate["chosen_zone"]] = candidate["cool_finish"]
         next_send_time = start_four + config.send_gap_min
 
-        # sortir les pièces déjà fermes avant le prochain envoi
         scheduled_all = _schedule_pending(
             pending,
             deco_available,
@@ -358,7 +313,76 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
                 if s["latence"] > config.latence_max:
                     reason = "Latence" if not reason else f"{reason}; Latence"
 
-                results.append({
+                results.append(
+                    {
+                        "PRM": config.prm_name,
+                        "Bras": s["arm"],
+                        "Produit": s["product"],
+                        "Début Four (min)": s["start_four"],
+                        "Fin Four (min)": s["end_four"],
+                        "Début Refroidissement (min)": s["start_cool"],
+                        "Fin Refroidissement (min)": s["cool_finish"],
+                        "Début Déco (min)": s["start_deco"],
+                        "Fin Déco (min)": s["end_deco"],
+                        "Latence (min)": s["latence"],
+                        "Attente avant four (min)": s["attente_avant_four"],
+                        "Attente avant déco (min)": s["latence"],
+                        "Temps zone 1 (min)": s["time_z1"],
+                        "Temps zone 2 (min)": s["time_z2"],
+                        "Chemin refroidissement": s["path"],
+                        "Motif décalage": reason,
+                        "Cycle": s["cycle"],
+                    }
+                )
+
+                deco_available = s["end_deco"] + config.deco_gap_min
+                arm_available[s["arm"]] = s["end_deco"]
+            else:
+                still_pending.append(
+                    {
+                        k: v
+                        for k, v in s.items()
+                        if k in [
+                            "PRM",
+                            "arm",
+                            "product",
+                            "cycle",
+                            "start_four",
+                            "end_four",
+                            "start_cool",
+                            "cool_finish",
+                            "deco",
+                            "attente_avant_four",
+                            "time_z1",
+                            "time_z2",
+                            "path",
+                            "reason",
+                            "chosen_zone",
+                        ]
+                    }
+                )
+
+        pending = still_pending
+        cycle += 1
+
+        if start_four >= config.end_time:
+            break
+
+    final_schedule = _schedule_pending(
+        pending,
+        deco_available,
+        config.deco_gap_min,
+        pause_windows,
+    )
+
+    for s in final_schedule:
+        if s["end_deco"] <= config.end_time:
+            reason = s["pause_reason"] or s["reason"]
+            if s["latence"] > config.latence_max:
+                reason = "Latence" if not reason else f"{reason}; Latence"
+
+            results.append(
+                {
                     "PRM": config.prm_name,
                     "Bras": s["arm"],
                     "Produit": s["product"],
@@ -376,71 +400,8 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
                     "Chemin refroidissement": s["path"],
                     "Motif décalage": reason,
                     "Cycle": s["cycle"],
-                })
-
-                deco_available = s["end_deco"] + config.deco_gap_min
-                arm_available[s["arm"]] = s["end_deco"]
-            else:
-                still_pending.append({
-                    k: v for k, v in s.items()
-                    if k in [
-                        "PRM",
-                        "arm",
-                        "product",
-                        "cycle",
-                        "start_four",
-                        "end_four",
-                        "start_cool",
-                        "cool_finish",
-                        "deco",
-                        "attente_avant_four",
-                        "time_z1",
-                        "time_z2",
-                        "path",
-                        "reason",
-                        "chosen_zone",
-                    ]
-                })
-
-        pending = still_pending
-        cycle += 1
-
-        if start_four >= config.end_time:
-            break
-
-    # flush final
-    final_schedule = _schedule_pending(
-        pending,
-        deco_available,
-        config.deco_gap_min,
-        pause_windows,
-    )
-
-    for s in final_schedule:
-        if s["end_deco"] <= config.end_time:
-            reason = s["pause_reason"] or s["reason"]
-            if s["latence"] > config.latence_max:
-                reason = "Latence" if not reason else f"{reason}; Latence"
-
-            results.append({
-                "PRM": config.prm_name,
-                "Bras": s["arm"],
-                "Produit": s["product"],
-                "Début Four (min)": s["start_four"],
-                "Fin Four (min)": s["end_four"],
-                "Début Refroidissement (min)": s["start_cool"],
-                "Fin Refroidissement (min)": s["cool_finish"],
-                "Début Déco (min)": s["start_deco"],
-                "Fin Déco (min)": s["end_deco"],
-                "Latence (min)": s["latence"],
-                "Attente avant four (min)": s["attente_avant_four"],
-                "Attente avant déco (min)": s["latence"],
-                "Temps zone 1 (min)": s["time_z1"],
-                "Temps zone 2 (min)": s["time_z2"],
-                "Chemin refroidissement": s["path"],
-                "Motif décalage": reason,
-                "Cycle": s["cycle"],
-            })
+                }
+            )
 
     return pd.DataFrame(results)
 
