@@ -1,5 +1,8 @@
 from io import BytesIO
-import pandas as_bytes(import pandas as pd
+import pandas as pd
+
+
+def build_excel_bytes(
     simulation_df=None,
     scenarios_df=None,
     overtime_df=None,
@@ -26,5 +29,4 @@ import pandas as_bytes(import pandas as pd
 
     output.seek(0)
     return output.getvalue()
-
 
