@@ -1,16 +1,85 @@
-from dataclasses import dataclassfrom dataclasses import dat    extra_first_cycles_count: int = 4
+from dataclasses import dataclass
+from datetime import datetime
+import pandas as pd
 
 
-def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
+class ScenarioInfeasibleError(Exception):
+    """
+    Conservée pour compatibilité avec app.py / optimizer.py.
+    La simulation courante ne lève plus cette erreur métier.
+    """
+    def __init__(self, message, details=None):
+        super().__init__(message)
+        self.details = details or {}
+
+
+def format_time(minutes):
+    return f"{int(minutes // 60):02d}:{int(minutes % 60):02d}"
+
+
+def to_datetime(minutes):
+    return datetime(2024, 1, 1, int(minutes // 60), int(minutes % 60))
+
+
+def normalize_arm_order(first_arm):
+    arms = [1, 2, 3, 4]
+    idx = arms.index(first_arm)
+    return arms[idx:] + arms[:idx]
+
+
+def apply_pause_windows(start_op, duration, pause_windows):
+    """
+    Reporte le démarrage d'une opération manuelle si elle démarre pendant une pause
+    ou si elle chevauche une pause.
+    """
+    reason = ""
+    changed = True
+
+    while changed:
+        changed = False
+        end_temp = start_op + duration
+
+        for p_start, p_end in sorted(pause_windows):
+            # démarre pendant la pause
+            if p_start <= start_op < p_end:
+                start_op = p_end
+                reason = "Pause"
+                changed = True
+                break
+
+            # chevauche la pause
+            if start_op < p_start and end_temp > p_start:
+                start_op = p_end
+                reason = "Pause"
+                changed = True
+                break
+
+    return start_op, reason
+
+
+@dataclass
+class PRMSimulationConfig:
+    prm_name: str
+    start_time: int
+    end_time: int
+    arms_config: dict
+    cycle_times: dict
+    first_arm: int = 4
+    send_gap_min: int = 1
+    latence_max: int = 20
+    deco_gap_min: int = 5
+    pause_windows: list = None
+    extra_first_cycles: int = 2
+    extra_first_cycles_count: int = 4
+
+
+def simulate_prm(config):
     """
     Version 'calcul historique' :
 
-    - on NE rejette plus les scénarios comme infaisables,
-    - on décale l'entrée au four de la pièce courante si la latence projetée dépasse la limite,
-    - l'objectif est de calculer une production cohérente en fonction de la latence proposée.
-
-    Cette logique correspond à l'esprit du premier simulateur :
-    la latence borne le flux en retardant l'amont, au lieu de faire planter la simulation.
+    - on ne rejette plus les scénarios comme infaisables
+    - on décale l'entrée au four de la pièce courante si la latence projetée dépasse la limite
+    - l'objectif est de calculer une production cohérente en fonction de la latence proposée
     """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
@@ -25,8 +94,10 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
     next_send_time = config.start_time
 
     # disponibilité de 2 zones de refroidissement simplifiées comme 2 capacités parallèles
-    # On choisit la zone libre la plus tôt disponible
-    cool_slot_available = {"Z1": config.start_time, "Z2": config.start_time}
+    cool_slot_available = {
+        "Z1": config.start_time,
+        "Z2": config.start_time,
+    }
 
     results = []
     cycle_idx = 0
@@ -115,7 +186,7 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
     return pd.DataFrame(results)
 
 
-def format_simulation_df(df: pd.DataFrame) -> pd.DataFrame:
+def format_simulation_df(df):
     if df.empty:
         return df.copy()
 
@@ -128,6 +199,7 @@ def format_simulation_df(df: pd.DataFrame) -> pd.DataFrame:
         ("Début Déco (min)", "Début Déco"),
         ("Fin Déco (min)", "Fin Déco"),
     ]
+
     for c_in, c_out in pairs:
         out[c_out] = out[c_in].apply(format_time)
 
@@ -153,13 +225,14 @@ def format_simulation_df(df: pd.DataFrame) -> pd.DataFrame:
     return out[ordered]
 
 
-def build_gantt_source(df: pd.DataFrame) -> pd.DataFrame:
+def build_gantt_source(df):
     if df.empty:
         return pd.DataFrame()
 
     tasks = []
     for _, row in df.iterrows():
         label = f"{row['PRM']} - B{row['Bras']} - {row['Produit']}"
+
         tasks.extend(
             [
                 {
@@ -182,6 +255,7 @@ def build_gantt_source(df: pd.DataFrame) -> pd.DataFrame:
                 },
             ]
         )
+
         if row["Latence (min)"] > 0:
             tasks.append(
                 {
@@ -191,10 +265,11 @@ def build_gantt_source(df: pd.DataFrame) -> pd.DataFrame:
                     "Type": "LATENCE",
                 }
             )
+
     return pd.DataFrame(tasks)
 
 
-def compute_prm_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dict:
+def compute_prm_kpis(df, start_time, end_time):
     if df.empty:
         return {
             "production": 0,
@@ -215,73 +290,3 @@ def compute_prm_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dict:
         "latence_max_obs": round(df["Latence (min)"].max(), 2),
         "par_produit": df["Produit"].value_counts().to_dict(),
     }
-``
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
-import pandas as pd
-
-
-class ScenarioInfeasibleError(Exception):
-    """
-    Conservée pour compatibilité avec app.py / optimizer.py,
-    mais la simulation courante ne lève plus cette erreur métier.
-    """
-    def __init__(self, message: str, details: Optional[dict] = None):
-        super().__init__(message)
-        self.details = details or {}
-
-
-def format_time(minutes: int) -> str:
-    return f"{int(minutes // 60):02d}:{int(minutes % 60):02d}"
-
-
-def to_datetime(minutes: int) -> datetime:
-    return datetime(2024, 1, 1, int(minutes // 60), int(minutes % 60))
-
-
-def normalize_arm_order(first_arm: int) -> List[int]:
-    arms = [1, 2, 3, 4]
-    idx = arms.index(first_arm)
-    return arms[idx:] + arms[:idx]
-
-
-def apply_pause_windows(start_op: int, duration: int, pause_windows: List[Tuple[int, int]]) -> Tuple[int, str]:
-    """
-    Reporte le démarrage d'une opération manuelle si elle démarre pendant une pause
-    ou si elle chevauche une pause.
-    """
-    reason = ""
-    changed = True
-    while changed:
-        changed = False
-        end_temp = start_op + duration
-        for p_start, p_end in sorted(pause_windows):
-            # démarre pendant la pause
-            if p_start <= start_op < p_end:
-                start_op = p_end
-                reason = "Pause"
-                changed = True
-                break
-            # chevauche la pause
-            if start_op < p_start and end_temp > p_start:
-                start_op = p_end
-                reason = "Pause"
-                changed = True
-                break
-    return start_op, reason
-
-
-@dataclass
-class PRMSimulationConfig:
-    prm_name: str
-    start_time: int
-    end_time: int
-    arms_config: Dict[int, str]
-    cycle_times: Dict[str, Dict[str, int]]
-    first_arm: int = 4
-    send_gap_min: int = 1
-    latence_max: int = 20
-    deco_gap_min: int = 5
-    pause_windows: Optional[List[Tuple[int, int]]] = None
-    extra_first_cycles: int = 2
-
