@@ -14,6 +14,7 @@ from config import (
 )
 from simulation import (
     PRMSimulationConfig,
+    ScenarioInfeasibleError,
     build_gantt_source,
     compute_prm_kpis,
     format_simulation_df,
@@ -91,6 +92,7 @@ def update_selected_cycle_times(prm_name: str, edited_selected: pd.DataFrame):
 
 def build_prm_form(prm_name: str, available_products, default_first_arm: int):
     st.markdown(f"### Paramètres {PRM_LABELS[prm_name]}")
+
     first_arm = st.selectbox(
         f"Premier bras {PRM_LABELS[prm_name]}",
         [1, 2, 3, 4],
@@ -101,6 +103,7 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
     st.caption("Affectation produit / bras")
     cols = st.columns(4)
     arms_config = {}
+
     for arm in [1, 2, 3, 4]:
         with cols[arm - 1]:
             default_index = min(arm - 1, len(available_products) - 1) if available_products else 0
@@ -110,6 +113,7 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
                 key=f"{prm_name}_arm_{arm}",
                 index=default_index,
             )
+
     return first_arm, arms_config
 
 
@@ -143,23 +147,46 @@ with st.sidebar:
 
     col1, col2 = st.columns(2)
     with col1:
-        pause_midi_start = st.time_input("Début pause midi", value=pd.Timestamp("12:00").to_pydatetime().time())
-        pause_pm_start = st.time_input("Début pause PM", value=pd.Timestamp("15:00").to_pydatetime().time())
+        pause_midi_start = st.time_input(
+            "Début pause midi",
+            value=pd.Timestamp("12:00").to_pydatetime().time(),
+        )
+        pause_pm_start = st.time_input(
+            "Début pause PM",
+            value=pd.Timestamp("15:00").to_pydatetime().time(),
+        )
     with col2:
-        pause_midi_end = st.time_input("Fin pause midi", value=pd.Timestamp("13:00").to_pydatetime().time())
-        pause_pm_end = st.time_input("Fin pause PM", value=pd.Timestamp("15:15").to_pydatetime().time())
+        pause_midi_end = st.time_input(
+            "Fin pause midi",
+            value=pd.Timestamp("13:00").to_pydatetime().time(),
+        )
+        pause_pm_end = st.time_input(
+            "Fin pause PM",
+            value=pd.Timestamp("15:15").to_pydatetime().time(),
+        )
 
     pause_windows = []
     if pause_midi_active:
-        pause_windows.append((pause_midi_start.hour * 60 + pause_midi_start.minute, pause_midi_end.hour * 60 + pause_midi_end.minute))
+        pause_windows.append(
+            (
+                pause_midi_start.hour * 60 + pause_midi_start.minute,
+                pause_midi_end.hour * 60 + pause_midi_end.minute,
+            )
+        )
     if pause_pm_active:
-        pause_windows.append((pause_pm_start.hour * 60 + pause_pm_start.minute, pause_pm_end.hour * 60 + pause_pm_end.minute))
+        pause_windows.append(
+            (
+                pause_pm_start.hour * 60 + pause_pm_start.minute,
+                pause_pm_end.hour * 60 + pause_pm_end.minute,
+            )
+        )
 
 
 # ----------------------
 # Tabs
 # ----------------------
 tab1, tab2, tab3 = st.tabs(["Simulation", "Optimisation", "Table des temps"])
+
 
 with tab3:
     st.subheader(f"Temps de cycle – {PRM_LABELS[selected_prm]}")
@@ -189,7 +216,11 @@ with tab1:
     if not available_products:
         st.warning("Aucun produit défini pour cette PRM dans la table des temps.")
     else:
-        first_arm, arms_config = build_prm_form(selected_prm, available_products, DEFAULT_FIRST_ARMS[selected_prm])
+        first_arm, arms_config = build_prm_form(
+            selected_prm,
+            available_products,
+            DEFAULT_FIRST_ARMS[selected_prm],
+        )
 
         if st.button("Lancer la simulation", type="primary"):
             cfg = PRMSimulationConfig(
@@ -204,19 +235,46 @@ with tab1:
                 deco_gap_min=deco_gap_min,
                 pause_windows=pause_windows,
             )
-            df_raw = simulate_prm(cfg)
-            df_view = format_simulation_df(df_raw)
-            gantt_df = build_gantt_source(df_raw)
-            kpis = compute_prm_kpis(df_raw, start_time, end_time)
 
-            st.session_state["df_raw"] = df_raw
-            st.session_state["df_view"] = df_view
-            st.session_state["gantt_df"] = gantt_df
-            st.session_state["kpis"] = kpis
-            st.session_state["selected_prm"] = selected_prm
+            try:
+                df_raw = simulate_prm(cfg)
+                df_view = format_simulation_df(df_raw)
+                gantt_df = build_gantt_source(df_raw)
+                kpis = compute_prm_kpis(df_raw, start_time, end_time)
 
-        if st.session_state["df_view"] is not None and st.session_state["selected_prm"] == selected_prm:
+                st.session_state["df_raw"] = df_raw
+                st.session_state["df_view"] = df_view
+                st.session_state["gantt_df"] = gantt_df
+                st.session_state["kpis"] = kpis
+                st.session_state["selected_prm"] = selected_prm
+
+            except ScenarioInfeasibleError as e:
+                st.session_state["df_raw"] = None
+                st.session_state["df_view"] = None
+                st.session_state["gantt_df"] = None
+                st.session_state["kpis"] = None
+
+                st.error(
+                    "Scénario infaisable : la latence maximale ne peut pas être respectée "
+                    "avec les paramètres actuels."
+                )
+                st.code(str(e), language="text")
+
+            except Exception as e:
+                st.session_state["df_raw"] = None
+                st.session_state["df_view"] = None
+                st.session_state["gantt_df"] = None
+                st.session_state["kpis"] = None
+
+                st.error("Une erreur technique inattendue est survenue pendant la simulation.")
+                st.code(str(e), language="text")
+
+        if (
+            st.session_state["df_view"] is not None
+            and st.session_state["selected_prm"] == selected_prm
+        ):
             kpis = st.session_state["kpis"]
+
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Production totale", kpis["production"])
             col2.metric("Taux four (%)", kpis["taux_four"])
@@ -261,10 +319,14 @@ with tab1:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
+
 with tab2:
     st.header(f"Optimisation – {PRM_LABELS[selected_prm]}")
 
-    if st.session_state["df_view"] is None or st.session_state["selected_prm"] != selected_prm:
+    if (
+        st.session_state["df_view"] is None
+        or st.session_state["selected_prm"] != selected_prm
+    ):
         st.info("Lancez d'abord une simulation pour cette PRM.")
     else:
         if st.button("Lancer l'optimisation"):
@@ -274,12 +336,15 @@ with tab2:
             base_config = {
                 "arms_config": {
                     1: st.session_state.get(f"{selected_prm}_arm_1", available_products[0]),
-                    2: st.session_state.get(f"{selected_prm}_arm_2", available_products[min(1, len(available_products)-1)]),
-                    3: st.session_state.get(f"{selected_prm}_arm_3", available_products[min(2, len(available_products)-1)]),
-                    4: st.session_state.get(f"{selected_prm}_arm_4", available_products[min(3, len(available_products)-1)]),
+                    2: st.session_state.get(f"{selected_prm}_arm_2", available_products[min(1, len(available_products) - 1)]),
+                    3: st.session_state.get(f"{selected_prm}_arm_3", available_products[min(2, len(available_products) - 1)]),
+                    4: st.session_state.get(f"{selected_prm}_arm_4", available_products[min(3, len(available_products) - 1)]),
                 },
                 "cycle_times": cycle_times_all[selected_prm],
-                "first_arm": st.session_state.get(f"first_arm_{selected_prm}", DEFAULT_FIRST_ARMS[selected_prm]),
+                "first_arm": st.session_state.get(
+                    f"first_arm_{selected_prm}",
+                    DEFAULT_FIRST_ARMS[selected_prm],
+                ),
             }
 
             df_scenarios, best = evaluate_scenarios(
@@ -329,12 +394,14 @@ with tab2:
         if st.session_state["df_scenarios"] is not None:
             st.subheader("Scénarios")
             st.dataframe(st.session_state["df_scenarios"], use_container_width=True)
+
             best = st.session_state["best_scenario"]
             if best:
                 st.success(
                     f"Meilleur scénario : {best['Scenario']} | Production {best['Production']} | "
                     f"Latence moy {best['Latence moy']} | Taux four {best['Taux four (%)']}%"
                 )
+
                 fig = px.scatter(
                     st.session_state["df_scenarios"],
                     x="Taux four (%)",
@@ -347,6 +414,7 @@ with tab2:
         if st.session_state["df_ot"] is not None:
             st.subheader("Overtime intelligent")
             st.dataframe(st.session_state["df_ot"], use_container_width=True)
+
             if st.session_state["last_piece"] is not None:
                 st.subheader("Dernière pièce ajoutée")
                 st.dataframe(st.session_state["last_piece"], use_container_width=True)
