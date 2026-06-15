@@ -1,4 +1,3 @@
-
 PRM_LABELS = {
     "PRM4500-1": "PRM4500-1 (XPERCO)",
     "PRM4500-2": "PRM4500-2 (OXY)",
@@ -23,11 +22,11 @@ DEFAULT_START_TIMES = {
 }
 
 DEFAULT_END_TIME = 21 * 60 + 45
-
-# Valeurs par défaut
 DEFAULT_LATENCE_MAX = 20
-DEFAULT_SEND_GAP = 20
-DEFAULT_DECO_GAP = 5
+
+# Paramètres internes fixes
+FIXED_SEND_GAP = 1
+FIXED_DECO_GAP = 5
 
 DEFAULT_FIRST_ARMS = {
     "PRM4500-1": 1,
