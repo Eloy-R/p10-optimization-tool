@@ -1,6 +1,12 @@
 import itertools
 import pandas as pd
-from simulation import PRMSimulationConfig, compute_prm_kpis, format_simulation_df, simulate_prm
+from simulation import (
+    PRMSimulationConfig,
+    ScenarioInfeasibleError,
+    compute_prm_kpis,
+    format_simulation_df,
+    simulate_prm,
+)
 
 
 def _score(kpis: dict) -> float:
@@ -12,7 +18,16 @@ def _score(kpis: dict) -> float:
     )
 
 
-def _build_config(prm_name, start_time, end_time, base_config, send_gap_min, latence_max, deco_gap_min, pause_windows):
+def _build_config(
+    prm_name,
+    start_time,
+    end_time,
+    base_config,
+    send_gap_min,
+    latence_max,
+    deco_gap_min,
+    pause_windows,
+):
     return PRMSimulationConfig(
         prm_name=prm_name,
         start_time=start_time,
@@ -27,16 +42,42 @@ def _build_config(prm_name, start_time, end_time, base_config, send_gap_min, lat
     )
 
 
-def evaluate_scenarios(prm_name, start_time, end_time, base_config, send_gap_values, latence_values, deco_gap_values, pause_sets):
+def evaluate_scenarios(
+    prm_name,
+    start_time,
+    end_time,
+    base_config,
+    send_gap_values,
+    latence_values,
+    deco_gap_values,
+    pause_sets,
+):
     records = []
     best = None
     best_score = float("-inf")
 
     for (pause_name, pause_windows), send_gap, lat, deco_gap in itertools.product(
-        pause_sets, send_gap_values, latence_values, deco_gap_values
+        pause_sets,
+        send_gap_values,
+        latence_values,
+        deco_gap_values,
     ):
-        cfg = _build_config(prm_name, start_time, end_time, base_config, send_gap, lat, deco_gap, pause_windows)
-        df = simulate_prm(cfg)
+        cfg = _build_config(
+            prm_name,
+            start_time,
+            end_time,
+            base_config,
+            send_gap,
+            lat,
+            deco_gap,
+            pause_windows,
+        )
+
+        try:
+            df = simulate_prm(cfg)
+        except ScenarioInfeasibleError:
+            continue
+
         if df.empty:
             continue
 
@@ -68,15 +109,39 @@ def evaluate_scenarios(prm_name, start_time, end_time, base_config, send_gap_val
     return df_records, best
 
 
-def evaluate_overtime(prm_name, start_time, end_time, base_config, send_gap_min, latence_max, deco_gap_min, pause_windows, overtime_values):
+def evaluate_overtime(
+    prm_name,
+    start_time,
+    end_time,
+    base_config,
+    send_gap_min,
+    latence_max,
+    deco_gap_min,
+    pause_windows,
+    overtime_values,
+):
     rows = []
     best_extra = None
     last_piece = None
     prev_prod = None
 
     for extra in overtime_values:
-        cfg = _build_config(prm_name, start_time, end_time + extra, base_config, send_gap_min, latence_max, deco_gap_min, pause_windows)
-        df = simulate_prm(cfg)
+        cfg = _build_config(
+            prm_name,
+            start_time,
+            end_time + extra,
+            base_config,
+            send_gap_min,
+            latence_max,
+            deco_gap_min,
+            pause_windows,
+        )
+
+        try:
+            df = simulate_prm(cfg)
+        except ScenarioInfeasibleError:
+            df = pd.DataFrame()
+
         prod = 0 if df.empty else len(df)
         rows.append({"Overtime (min)": extra, "Production": prod})
 
@@ -90,7 +155,17 @@ def evaluate_overtime(prm_name, start_time, end_time, base_config, send_gap_min,
     return pd.DataFrame(rows), best_extra, last_piece
 
 
-def evaluate_mixes(prm_name, start_time, end_time, base_config, product_options, send_gap_min, latence_max, deco_gap_min, pause_windows):
+def evaluate_mixes(
+    prm_name,
+    start_time,
+    end_time,
+    base_config,
+    product_options,
+    send_gap_min,
+    latence_max,
+    deco_gap_min,
+    pause_windows,
+):
     motifs = {
         "Actuel": None,
         "Alterné": [0, 1, 0, 1],
@@ -98,8 +173,10 @@ def evaluate_mixes(prm_name, start_time, end_time, base_config, product_options,
     }
 
     rows = []
+
     for motif_name, motif in motifs.items():
         arms = base_config["arms_config"].copy()
+
         if motif is not None and len(product_options) >= 2:
             for i, arm in enumerate([1, 2, 3, 4]):
                 arms[arm] = product_options[motif[i] % len(product_options)]
@@ -116,7 +193,12 @@ def evaluate_mixes(prm_name, start_time, end_time, base_config, product_options,
             deco_gap_min=deco_gap_min,
             pause_windows=pause_windows,
         )
-        df = simulate_prm(cfg)
+
+        try:
+            df = simulate_prm(cfg)
+        except ScenarioInfeasibleError:
+            continue
+
         if df.empty:
             continue
 
@@ -132,6 +214,9 @@ def evaluate_mixes(prm_name, start_time, end_time, base_config, product_options,
 
     df_rows = pd.DataFrame(rows)
     if not df_rows.empty:
-        df_rows = df_rows.sort_values(["Production", "Taux four (%)"], ascending=False).reset_index(drop=True)
+        df_rows = df_rows.sort_values(
+            ["Production", "Taux four (%)"],
+            ascending=False,
+        ).reset_index(drop=True)
 
     return df_rows
