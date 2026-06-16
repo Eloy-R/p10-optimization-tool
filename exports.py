@@ -29,4 +29,3 @@ def build_excel_bytes(
 
     output.seek(0)
     return output.getvalue()
-
