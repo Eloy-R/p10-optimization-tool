@@ -70,28 +70,18 @@ class PRMSimulationConfig:
 
 def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
     """
-    Version 'calcul historique' :
-    - on ne rejette plus les scénarios comme infaisables,
-    - on décale l'entrée au four de la pièce courante si la latence projetée dépasse la limite,
-    - l'objectif est de calculer une production cohérente en fonction de la latence proposée.
+    Logique de calcul :
+    - on ne rejette plus les scénarios comme infaisables
+    - on décale l'entrée au four de la pièce courante si la latence projetée dépasse la limite
+    - l'objectif est de calculer une production cohérente en fonction de la latence proposée
     """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
 
-    # disponibilité de chaque bras après son cycle complet
     arm_available = {arm: config.start_time for arm in config.arms_config}
-
-    # disponibilité du poste déco/coffrage (1 ressource manuelle)
     deco_available = config.start_time
-
-    # prochaine fenêtre d'envoi au four
     next_send_time = config.start_time
-
-    # disponibilité de 2 zones de refroidissement simplifiées comme 2 capacités parallèles
-    cool_slot_available = {
-        "Z1": config.start_time,
-        "Z2": config.start_time,
-    }
+    cool_slot_available = {"Z1": config.start_time, "Z2": config.start_time}
 
     results = []
     cycle_idx = 0
@@ -111,14 +101,11 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         if cycle_idx < config.extra_first_cycles_count:
             heat += config.extra_first_cycles
 
-        # départ four : le plus tôt possible selon cadence mini et disponibilité bras
         start_four = max(next_send_time, arm_available[arm])
 
-        # logique historique : si la latence dépasse la limite, on décale l'amont
         while True:
             end_four = start_four + heat
 
-            # zone de refroidissement disponible la plus tôt
             chosen_zone = min(
                 cool_slot_available,
                 key=lambda z: max(cool_slot_available[z], end_four)
@@ -134,12 +121,11 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             if latence <= config.latence_max:
                 break
 
-            # on décale l'entrée au four de l'excès constaté
+            # logique historique : on décale l'entrée au four de l'excès constaté
             start_four += (latence - config.latence_max)
 
         end_deco = start_deco + deco
 
-        # borne fin de journée = fin du dernier décoffrage
         if end_deco > config.end_time:
             break
 
@@ -258,3 +244,60 @@ def compute_prm_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dict:
         "latence_max_obs": round(df["Latence (min)"].max(), 2),
         "par_produit": df["Produit"].value_counts().to_dict(),
     }
+
+
+def get_process_state_at_time(df: pd.DataFrame, current_minute: int) -> dict:
+    """
+    Retourne l'état du process à un instant donné.
+    """
+    state = {
+        "Four": [],
+        "Refroid. Z1": [],
+        "Refroid. Z2": [],
+        "Avant déco": [],
+        "Déco": [],
+    }
+
+    if df.empty:
+        return state
+
+    for _, row in df.iterrows():
+        label = f"B{int(row['Bras'])} - {row['Produit']}"
+
+        start_four = row["Début Four (min)"]
+        end_four = row["Fin Four (min)"]
+        start_ref = row["Début Refroidissement (min)"]
+        end_ref = row["Fin Refroidissement (min)"]
+        start_deco = row["Début Déco (min)"]
+        end_deco = row["Fin Déco (min)"]
+
+        if start_four <= current_minute < end_four:
+            state["Four"].append(label)
+
+        elif start_ref <= current_minute < end_ref:
+            tz1 = row.get("Temps zone 1 (min)", 0)
+            tz2 = row.get("Temps zone 2 (min)", 0)
+
+            if tz1 > 0 and tz2 == 0:
+                state["Refroid. Z1"].append(label)
+            elif tz2 > 0 and tz1 == 0:
+                state["Refroid. Z2"].append(label)
+            elif tz1 > 0 and tz2 > 0:
+                total = tz1 + tz2
+                elapsed = current_minute - start_ref
+                threshold = tz1 / total if total > 0 else 1
+                progression = elapsed / max(1, (end_ref - start_ref))
+                if progression <= threshold:
+                    state["Refroid. Z1"].append(label)
+                else:
+                    state["Refroid. Z2"].append(label)
+            else:
+                state["Refroid. Z1"].append(label)
+
+        elif end_ref <= current_minute < start_deco:
+            state["Avant déco"].append(label)
+
+        elif start_deco <= current_minute < end_deco:
+            state["Déco"].append(label)
+
+    return state
