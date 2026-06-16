@@ -1,26 +1,28 @@
+  import time
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
 from config import (
     DEFAULT_CYCLE_TIMES,
-    DEFAULT_LATENCE_MAX,
     DEFAULT_END_TIME,
-    DEFAULT_START_TIMES,
     DEFAULT_FIRST_ARMS,
-    FIXED_SEND_GAP,
+    DEFAULT_LATENCE_MAX,
+    DEFAULT_START_TIMES,
     FIXED_DECO_GAP,
+    FIXED_SEND_GAP,
     PRM_LABELS,
 )
 from simulation import (
     PRMSimulationConfig,
     ScenarioInfeasibleError,
-    simulate_prm,
-    format_simulation_df,
     build_gantt_source,
     compute_prm_kpis,
+    format_simulation_df,
+    get_process_state_at_time,
+    simulate_prm,
 )
-from optimizer import evaluate_scenarios, evaluate_overtime, evaluate_mixes
+from optimizer import evaluate_mixes, evaluate_overtime, evaluate_scenarios
 from exports import build_excel_bytes
 
 
@@ -108,9 +110,11 @@ for key in [
     "df_mix",
     "last_piece",
     "selected_prm",
+    "process_time",
+    "process_step",
+    "process_autoplay",
 ]:
     st.session_state.setdefault(key, None)
-
 
 st.title("Simulateur et optimisation de la ligne P10")
 
@@ -131,7 +135,6 @@ with st.sidebar:
 
     latence_max = st.slider("Latence max (min)", 0, 20, DEFAULT_LATENCE_MAX)
 
-    # Paramètres techniques fixes
     send_gap_min = FIXED_SEND_GAP
     deco_gap_min = FIXED_DECO_GAP
     st.caption("Le rythme d’envoi au four est calculé automatiquement pour respecter la latence.")
@@ -158,7 +161,7 @@ with st.sidebar:
         )
         pause_pm_end = st.time_input(
             "Fin pause PM",
-            value=pd.Timestamp("15:15").to_pydatetime().time(),
+            value=pd.Timestamp("16:00").to_pydatetime().time(),
         )
 
     pause_windows = []
@@ -197,7 +200,6 @@ with tab3:
         },
     )
     update_selected_cycle_times(selected_prm, edited.copy())
-
 
 with tab1:
     st.header(f"Simulation – {PRM_LABELS[selected_prm]}")
@@ -238,6 +240,9 @@ with tab1:
                 st.session_state["gantt_df"] = gantt_df
                 st.session_state["kpis"] = kpis
                 st.session_state["selected_prm"] = selected_prm
+                st.session_state["process_time"] = start_time
+                st.session_state["process_step"] = 10
+                st.session_state["process_autoplay"] = False
 
             except ScenarioInfeasibleError as e:
                 st.session_state["df_raw"] = None
@@ -296,6 +301,79 @@ with tab1:
         fig.update_layout(xaxis=dict(tickformat="%H:%M"))
         st.plotly_chart(fig, use_container_width=True)
 
+        # ----------------------
+        # Vue process + lecture automatique
+        # ----------------------
+        st.subheader("Vue process dans la journée")
+
+        c1, c2, c3 = st.columns([1, 1, 1])
+        with c1:
+            step_min = st.selectbox(
+                "Pas de temps (min)",
+                [1, 5, 10, 15, 30],
+                index=2,
+                key="process_step_select",
+            )
+            st.session_state["process_step"] = step_min
+
+        with c2:
+            autoplay = st.toggle("Lecture automatique", key="process_autoplay_toggle")
+            st.session_state["process_autoplay"] = autoplay
+
+        with c3:
+            if st.button("Réinitialiser la lecture"):
+                st.session_state["process_time"] = start_time
+                st.session_state["process_autoplay"] = False
+                st.session_state["process_autoplay_toggle"] = False
+
+        if st.session_state.get("process_time") is None:
+            st.session_state["process_time"] = start_time
+
+        current_minute = st.slider(
+            "Choisir un instant dans la journée",
+            min_value=start_time,
+            max_value=end_time,
+            value=int(st.session_state["process_time"]),
+            step=step_min,
+            key="process_time_slider",
+        )
+        st.session_state["process_time"] = current_minute
+
+        st.caption(f"Heure sélectionnée : {minutes_to_hhmm(current_minute)}")
+
+        process_state = get_process_state_at_time(
+            st.session_state["df_raw"],
+            current_minute
+        )
+
+        zone_cols = st.columns(5)
+        zones = [
+            ("Four", zone_cols[0]),
+            ("Refroid. Z1", zone_cols[1]),
+            ("Refroid. Z2", zone_cols[2]),
+            ("Avant déco", zone_cols[3]),
+            ("Déco", zone_cols[4]),
+        ]
+
+        for zone_name, col in zones:
+            with col:
+                st.markdown(f"### {zone_name}")
+                zone_items = process_state.get(zone_name, [])
+                if zone_items:
+                    for item in zone_items:
+                        st.markdown(f"- {item}")
+                else:
+                    st.caption("—")
+
+        # lecture automatique
+        if st.session_state.get("process_autoplay", False):
+            next_value = current_minute + step_min
+            if next_value > end_time:
+                next_value = start_time
+            time.sleep(0.6)
+            st.session_state["process_time"] = next_value
+            st.rerun()
+
         excel_bytes = build_excel_bytes(
             simulation_df=st.session_state["df_view"],
             scenarios_df=st.session_state["df_scenarios"],
@@ -309,7 +387,6 @@ with tab1:
             file_name=f"simulation_{selected_prm}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
 
 with tab2:
     st.header(f"Optimisation – {PRM_LABELS[selected_prm]}")
@@ -349,7 +426,7 @@ with tab2:
                 pause_sets=[
                     ("Sans pause", []),
                     ("Midi", [(12 * 60, 13 * 60)]),
-                    ("Midi+PM", [(12 * 60, 13 * 60), (15 * 60, 15 * 60 + 15)]),
+                    ("Midi+PM", [(12 * 60, 13 * 60), (15 * 60, 16 * 60)]),
                 ],
             )
             st.session_state["df_scenarios"] = df_scenarios
@@ -385,13 +462,6 @@ with tab2:
         if st.session_state["df_scenarios"] is not None:
             st.subheader("Scénarios")
             st.dataframe(st.session_state["df_scenarios"], use_container_width=True)
-
-            df_scen = st.session_state["df_scenarios"]
-            if not df_scen.empty and (df_scen["Statut"] == "Infaisable").all():
-                st.warning(
-                    "Tous les scénarios testés sont infaisables avec les paramètres actuels. "
-                    "Essayez plutôt de modifier les pauses ou le mix produit."
-                )
 
             best = st.session_state["best_scenario"]
             if best:
