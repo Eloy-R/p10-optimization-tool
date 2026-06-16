@@ -24,7 +24,7 @@ DEFAULT_START_TIMES = {
 DEFAULT_END_TIME = 21 * 60 + 45
 DEFAULT_LATENCE_MAX = 20
 
-# Paramètres internes fixes
+# Paramètres techniques fixes
 FIXED_SEND_GAP = 1
 FIXED_DECO_GAP = 5
 
