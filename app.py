@@ -147,15 +147,15 @@ DEFAULTS = {
     "best_scenario": None,
     "best_no_overtime": None,
     "df_ot_summary": None,
-    "last_piece": None,
     "selected_prm": None,
     "df_mix": None,
     # viewer process
-    "process_time_widget": None,
+    "process_time_slider": None,
     "process_step_widget": 10,
     "process_autoplay_widget": False,
     "_next_process_time": None,
 }
+
 for key, value in DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -298,7 +298,7 @@ with tab1:
                 st.session_state["selected_prm"] = selected_prm
 
                 # reset viewer après nouvelle simulation
-                st.session_state["process_time_widget"] = start_time
+                st.session_state["process_time_slider"] = start_time
                 st.session_state["process_step_widget"] = 10
                 st.session_state["process_autoplay_widget"] = False
                 st.session_state["_next_process_time"] = None
@@ -364,18 +364,19 @@ with tab1:
         # ----------------------
         st.subheader("Vue process dans la journée")
 
+        # appliquer une prochaine valeur AVANT de créer le slider
         if st.session_state["_next_process_time"] is not None:
-            st.session_state["process_time_widget"] = st.session_state["_next_process_time"]
+            st.session_state["process_time_slider"] = st.session_state["_next_process_time"]
             st.session_state["_next_process_time"] = None
 
-        if st.session_state["process_time_widget"] is None:
-            st.session_state["process_time_widget"] = start_time
+        if st.session_state["process_time_slider"] is None:
+            st.session_state["process_time_slider"] = start_time
 
         c1, c2, c3 = st.columns([1, 1, 1])
 
         with c1:
             if st.button("Réinitialiser la lecture"):
-                st.session_state["process_time_widget"] = start_time
+                st.session_state["process_time_slider"] = start_time
                 st.session_state["process_autoplay_widget"] = False
                 st.session_state["_next_process_time"] = None
                 st.rerun()
@@ -393,14 +394,16 @@ with tab1:
                 key="process_autoplay_widget",
             )
 
-        # réaligner la valeur actuelle au nouveau pas
+        # réaligner AVANT le slider
         current_value_aligned = align_minute_to_step(
-            st.session_state["process_time_widget"],
+            st.session_state["process_time_slider"],
             start_min=start_time,
             end_min=end_time,
             step_min=step_min,
         )
-        st.session_state["process_time_widget"] = current_value_aligned
+
+        # on peut modifier la session ici car le slider n'est pas encore créé
+        st.session_state["process_time_slider"] = current_value_aligned
 
         current_minute = st.slider(
             "Choisir un instant dans la journée",
@@ -408,8 +411,12 @@ with tab1:
             max_value=end_time,
             value=current_value_aligned,
             step=step_min,
-            key="process_time_widget",
+            key="process_time_slider",
         )
+
+        # IMPORTANT :
+        # Ne pas réassigner st.session_state["process_time_slider"] ici,
+        # le slider le gère déjà automatiquement.
 
         current_minute = align_minute_to_step(
             current_minute,
@@ -417,7 +424,6 @@ with tab1:
             end_min=end_time,
             step_min=step_min,
         )
-        st.session_state["process_time_widget"] = current_minute
 
         st.caption(f"Heure sélectionnée : {minutes_to_hhmm(current_minute)}")
 
