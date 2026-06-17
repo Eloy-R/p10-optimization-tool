@@ -112,6 +112,7 @@ DEFAULTS = {
     "df_ot_summary": None,
     "last_piece": None,
     "selected_prm": None,
+    "df_mix": None,  # ✅ évite le KeyError
     # viewer process
     "process_time_widget": None,
     "process_step_widget": 10,
@@ -401,7 +402,7 @@ with tab1:
             simulation_df=st.session_state["df_view"],
             scenarios_df=st.session_state["df_scenarios"],
             overtime_df=st.session_state["df_ot_summary"],
-            mix_df=st.session_state["df_mix"],
+            mix_df=st.session_state.get("df_mix"),  # ✅ corrigé
             cycle_times_df=st.session_state["cycle_times_all"],
         )
         st.download_button(
