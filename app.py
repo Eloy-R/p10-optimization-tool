@@ -189,8 +189,8 @@ with st.sidebar:
     st.caption(f"Marge mini entre deux décoffrages fixée à {FIXED_DECO_GAP} min.")
 
     st.subheader("Pauses")
-    pause_matin_active = st.checkbox("Pause matin / midi", True)
-    pause_aprem_active = st.checkbox("Pause après-midi", True)
+    pause_matin_active = st.checkbox("Pause matin", True)
+    pause_aprem_active = st.checkbox("Pause soir", True)
 
     col1, col2 = st.columns(2)
     with col1:
