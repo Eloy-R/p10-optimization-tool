@@ -1,216 +1,187 @@
 import itertools
+from typing import List, Tuple
+
 import pandas as pd
-from simulation import (
-    PRMSimulationConfig,
-    ScenarioInfeasibleError,
-    compute_prm_kpis,
-    format_simulation_df,
-    simulate_prm,
-)
+
+from simulation import PRMSimulationConfig, compute_prm_kpis, simulate_prm
 
 
-def _score(kpis: dict) -> float:
-    return (
-        kpis["production"] * 100
-        + kpis["taux_four"]
-        - kpis["latence_moy"] * 10
-        - kpis["latence_max_obs"] * 2
+def _unique_orders(values: List[str]) -> List[Tuple[str, str, str, str]]:
+    """Génère les permutations uniques d'une liste de 4 produits."""
+    return sorted(set(itertools.permutations(values, 4)))
+
+
+def _pause_windows_from_duration(pause_start_matin: int, pause_start_aprem: int, duration_min: int):
+    if duration_min <= 0:
+        return []
+    return [
+        (pause_start_matin, pause_start_matin + duration_min),
+        (pause_start_aprem, pause_start_aprem + duration_min),
+    ]
+
+
+def _build_arms_config_from_order(order: Tuple[str, str, str, str]) -> dict:
+    return {1: order[0], 2: order[1], 3: order[2], 4: order[3]}
+
+
+def _score_row(
+    production: int,
+    latence_moy: float,
+    latence_max_obs: float,
+    taux_four: float,
+    overtime_min: int,
+    pause_duration: int,
+    latence_max_cible: int,
+) -> float:
+    """
+    Priorité demandée :
+    1) Production maximale
+    2) Impact minimal sur la latence (max 20 min)
+    3) Bonus léger sur le taux four
+    4) Léger malus overtime / pauses longues pour départager les égalités
+    """
+    penalty_lat_max = 10000 if latence_max_obs > latence_max_cible else 0
+
+    score = (
+        production * 1000
+        - penalty_lat_max
+        - latence_moy * 10
+        - max(0.0, latence_max_obs - latence_max_cible) * 100
+        + taux_four * 0.5
+        - overtime_min * 0.2
+        - pause_duration * 0.1
     )
+    return round(score, 3)
 
 
-def _build_config(prm_name, start_time, end_time, base_config, send_gap_min, latence_max, deco_gap_min, pause_windows):
-    return PRMSimulationConfig(
-        prm_name=prm_name,
-        start_time=start_time,
-        end_time=end_time,
-        arms_config=base_config["arms_config"],
-        cycle_times=base_config["cycle_times"],
-        first_arm=base_config["first_arm"],
-        send_gap_min=send_gap_min,
-        latence_max=latence_max,
-        deco_gap_min=deco_gap_min,
-        pause_windows=pause_windows,
-    )
+def evaluate_optimization(
+    prm_name: str,
+    start_time: int,
+    end_time: int,
+    base_config: dict,
+    latence_max: int,
+    send_gap_min: int,
+    deco_gap_min: int,
+    pause_start_matin: int,
+    pause_start_aprem: int,
+    pause_durations: List[int],
+    overtime_values: List[int],
+):
+    """
+    Évalue toutes les combinaisons :
+    - pauses : 0, 30 ou 60 min le matin ET l'après-midi
+    - permutations des 4 bras
+    - overtime
 
+    Sans modifier la simulation : on appelle simulate_prm(...) tel quel.
+    """
+    base_arms_order = [
+        base_config["arms_config"][1],
+        base_config["arms_config"][2],
+        base_config["arms_config"][3],
+        base_config["arms_config"][4],
+    ]
+    unique_orders = _unique_orders(base_arms_order)
 
-def evaluate_scenarios(prm_name, start_time, end_time, base_config, send_gap_values, latence_values, deco_gap_values, pause_sets):
     records = []
+
+    for pause_duration in pause_durations:
+        pause_windows = _pause_windows_from_duration(
+            pause_start_matin,
+            pause_start_aprem,
+            pause_duration,
+        )
+
+        for order in unique_orders:
+            arms_config = _build_arms_config_from_order(order)
+            order_label = " / ".join(order)
+
+            for overtime_min in overtime_values:
+                cfg = PRMSimulationConfig(
+                    prm_name=prm_name,
+                    start_time=start_time,
+                    end_time=end_time + overtime_min,
+                    arms_config=arms_config,
+                    cycle_times=base_config["cycle_times"],
+                    first_arm=base_config["first_arm"],
+                    send_gap_min=send_gap_min,
+                    latence_max=latence_max,
+                    deco_gap_min=deco_gap_min,
+                    pause_windows=pause_windows,
+                )
+
+                df = simulate_prm(cfg)
+                kpis = compute_prm_kpis(df, start_time, end_time + overtime_min)
+
+                production = int(kpis["production"])
+                lat_moy = float(kpis["latence_moy"])
+                lat_max_obs = float(kpis["latence_max_obs"])
+                taux_four = float(kpis["taux_four"])
+
+                score = _score_row(
+                    production=production,
+                    latence_moy=lat_moy,
+                    latence_max_obs=lat_max_obs,
+                    taux_four=taux_four,
+                    overtime_min=overtime_min,
+                    pause_duration=pause_duration,
+                    latence_max_cible=latence_max,
+                )
+
+                records.append(
+                    {
+                        "Pause (min)": pause_duration,
+                        "Bras 1": order[0],
+                        "Bras 2": order[1],
+                        "Bras 3": order[2],
+                        "Bras 4": order[3],
+                        "Ordre bras": order_label,
+                        "Overtime (min)": overtime_min,
+                        "Production": production,
+                        "Latence moy": round(lat_moy, 3),
+                        "Latence max observée": round(lat_max_obs, 3),
+                        "Taux four (%)": round(taux_four, 3),
+                        "Score": score,
+                        "Statut": "OK" if lat_max_obs <= latence_max else "Latence > limite",
+                    }
+                )
+
+    df_scenarios = pd.DataFrame(records)
+    if df_scenarios.empty:
+        return df_scenarios, None, None, pd.DataFrame()
+
+    # Tri hiérarchique conforme à votre priorité métier
+    df_scenarios["_ok"] = (df_scenarios["Latence max observée"] <= latence_max).astype(int)
+    df_scenarios = df_scenarios.sort_values(
+        by=["_ok", "Production", "Latence moy", "Taux four (%)", "Overtime (min)", "Pause (min)"],
+        ascending=[False, False, True, False, True, True],
+    ).drop(columns=["_ok"]).reset_index(drop=True)
+
     best = None
-    best_score = float("-inf")
+    best_no_overtime = None
 
-    for (pause_name, pause_windows), send_gap, lat, deco_gap in itertools.product(
-        pause_sets,
-        send_gap_values,
-        latence_values,
-        deco_gap_values,
-    ):
-        cfg = _build_config(
-            prm_name,
-            start_time,
-            end_time,
-            base_config,
-            send_gap,
-            lat,
-            deco_gap,
-            pause_windows,
+    ok_df = df_scenarios[df_scenarios["Latence max observée"] <= latence_max].copy()
+    if not ok_df.empty:
+        best = ok_df.iloc[0].to_dict()
+        no_ot_df = ok_df[ok_df["Overtime (min)"] == 0]
+        if not no_ot_df.empty:
+            best_no_overtime = no_ot_df.iloc[0].to_dict()
+
+    # Résumé overtime : meilleure production atteignable par niveau d'overtime
+    grouped = (
+        df_scenarios.groupby("Overtime (min)", as_index=False)
+        .agg(
+            {
+                "Production": "max",
+                "Latence moy": "min",
+                "Latence max observée": "min",
+                "Taux four (%)": "max",
+            }
         )
+        .rename(columns={"Production": "Production max"})
+        .sort_values("Overtime (min)")
+        .reset_index(drop=True)
+    )
 
-        try:
-            df = simulate_prm(cfg)
-        except ScenarioInfeasibleError as e:
-            records.append({
-                "Scenario": f"{pause_name} | lat {lat}",
-                "Pause": pause_name,
-                "Send gap": send_gap,
-                "Latence max": lat,
-                "Déco gap": deco_gap,
-                "Production": 0,
-                "Taux four (%)": 0,
-                "Latence moy": None,
-                "Latence max observée": None,
-                "Score": None,
-                "Statut": "Infaisable",
-                "Raison": str(e),
-            })
-            continue
+    return df_scenarios, best, best_no_overtime, grouped
 
-        if df.empty:
-            records.append({
-                "Scenario": f"{pause_name} | lat {lat}",
-                "Pause": pause_name,
-                "Send gap": send_gap,
-                "Latence max": lat,
-                "Déco gap": deco_gap,
-                "Production": 0,
-                "Taux four (%)": 0,
-                "Latence moy": None,
-                "Latence max observée": None,
-                "Score": None,
-                "Statut": "Infaisable",
-                "Raison": "Aucune pièce ne peut être planifiée dans la journée.",
-            })
-            continue
-
-        kpis = compute_prm_kpis(df, start_time, end_time)
-        score = round(_score(kpis), 2)
-
-        record = {
-            "Scenario": f"{pause_name} | lat {lat}",
-            "Pause": pause_name,
-            "Send gap": send_gap,
-            "Latence max": lat,
-            "Déco gap": deco_gap,
-            "Production": kpis["production"],
-            "Taux four (%)": kpis["taux_four"],
-            "Latence moy": kpis["latence_moy"],
-            "Latence max observée": kpis["latence_max_obs"],
-            "Score": score,
-            "Statut": "Faisable",
-            "Raison": "",
-        }
-        records.append(record)
-
-        if score > best_score:
-            best_score = score
-            best = record
-
-    df_records = pd.DataFrame(records)
-    if not df_records.empty:
-        df_records["ordre_statut"] = df_records["Statut"].map({"Faisable": 0, "Infaisable": 1})
-        df_records = df_records.sort_values(
-            by=["ordre_statut", "Score"],
-            ascending=[True, False],
-            na_position="last",
-        ).drop(columns=["ordre_statut"]).reset_index(drop=True)
-
-    return df_records, best
-
-
-def evaluate_overtime(prm_name, start_time, end_time, base_config, send_gap_min, latence_max, deco_gap_min, pause_windows, overtime_values):
-    rows = []
-    best_extra = None
-    last_piece = None
-    prev_prod = None
-
-    for extra in overtime_values:
-        cfg = _build_config(
-            prm_name,
-            start_time,
-            end_time + extra,
-            base_config,
-            send_gap_min,
-            latence_max,
-            deco_gap_min,
-            pause_windows,
-        )
-
-        try:
-            df = simulate_prm(cfg)
-        except ScenarioInfeasibleError:
-            df = pd.DataFrame()
-
-        prod = 0 if df.empty else len(df)
-        rows.append({"Overtime (min)": extra, "Production": prod})
-
-        if prev_prod is not None and best_extra is None and prod > prev_prod:
-            best_extra = extra
-            if not df.empty:
-                last_piece = format_simulation_df(df.tail(1))
-
-        prev_prod = prod
-
-    return pd.DataFrame(rows), best_extra, last_piece
-
-
-def evaluate_mixes(prm_name, start_time, end_time, base_config, product_options, send_gap_min, latence_max, deco_gap_min, pause_windows):
-    motifs = {
-        "Actuel": None,
-        "Alterné": [0, 1, 0, 1],
-        "Blocs": [0, 0, 1, 1],
-    }
-
-    rows = []
-    for motif_name, motif in motifs.items():
-        arms = base_config["arms_config"].copy()
-
-        if motif is not None and len(product_options) >= 2:
-            for i, arm in enumerate([1, 2, 3, 4]):
-                arms[arm] = product_options[motif[i] % len(product_options)]
-
-        cfg = PRMSimulationConfig(
-            prm_name=prm_name,
-            start_time=start_time,
-            end_time=end_time,
-            arms_config=arms,
-            cycle_times=base_config["cycle_times"],
-            first_arm=base_config["first_arm"],
-            send_gap_min=send_gap_min,
-            latence_max=latence_max,
-            deco_gap_min=deco_gap_min,
-            pause_windows=pause_windows,
-        )
-
-        try:
-            df = simulate_prm(cfg)
-        except ScenarioInfeasibleError:
-            continue
-
-        if df.empty:
-            continue
-
-        kpis = compute_prm_kpis(df, start_time, end_time)
-        rows.append({
-            "Configuration": motif_name,
-            "Production": kpis["production"],
-            "Taux four (%)": kpis["taux_four"],
-            "Latence moy": kpis["latence_moy"],
-        })
-
-    df_rows = pd.DataFrame(rows)
-    if not df_rows.empty:
-        df_rows = df_rows.sort_values(
-            ["Production", "Taux four (%)"],
-            ascending=False,
-        ).reset_index(drop=True)
-
-    return df_rows
