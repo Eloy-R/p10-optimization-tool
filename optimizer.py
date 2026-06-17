@@ -66,7 +66,7 @@ def evaluate_optimization(
     pause_durations: List[int],
 ):
     """
-    Variables du tableau principal :
+    Variables du classement principal :
     - pauses : 0 / 30 / 60 min matin + soir
     - permutations des 4 bras
     - latence consigne testée
@@ -175,6 +175,7 @@ def build_pause_latency_curve(df_scenarios: pd.DataFrame) -> pd.DataFrame:
         by=["Pause (min)", "Latence consigne (min)", "_ok", "Production", "Latence moy", "Taux four (%)"],
         ascending=[True, True, False, False, True, False],
     )
+
     best_curve = work.groupby(["Pause (min)", "Latence consigne (min)"], as_index=False).first()
     return best_curve.drop(columns=["_ok"])
 
@@ -193,7 +194,7 @@ def evaluate_overtime_summary_from_best(
 ) -> pd.DataFrame:
     """
     Calcule l'impact de l'overtime sur LE meilleur scénario de base.
-    Cette synthèse est ANNEXE : elle n'entre pas dans le classement principal.
+    Cette synthèse est annexe : elle n'entre pas dans le classement principal.
     """
     if best_scenario is None:
         return pd.DataFrame()
@@ -204,6 +205,7 @@ def evaluate_overtime_summary_from_best(
         pause_start_aprem,
         pause_duration,
     )
+
     arms_config = {
         1: best_scenario["Bras 1"],
         2: best_scenario["Bras 2"],
@@ -226,6 +228,7 @@ def evaluate_overtime_summary_from_best(
             deco_gap_min=deco_gap_min,
             pause_windows=pause_windows,
         )
+
         df = simulate_prm(cfg)
         kpis = compute_prm_kpis(df, start_time, end_time + overtime)
 
