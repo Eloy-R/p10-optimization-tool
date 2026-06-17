@@ -181,7 +181,7 @@ with st.sidebar:
         )
     with col2:
         pause_matin_end = st.time_input(
-            "Fin pause matin / midi",
+            "Fin pause matin",
             value=pd.Timestamp("13:00").to_pydatetime().time(),
         )
         pause_aprem_end = st.time_input(
