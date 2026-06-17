@@ -25,7 +25,6 @@ from simulation import (
 from optimizer import evaluate_mixes, evaluate_overtime, evaluate_scenarios
 from exports import build_excel_bytes
 
-
 st.set_page_config(page_title="Simulateur P10", layout="wide")
 
 
@@ -82,7 +81,7 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
 
 
 # ----------------------
-# Session state
+# Initialisation session_state
 # ----------------------
 if "cycle_times_all" not in st.session_state:
     rows = []
@@ -99,22 +98,25 @@ if "cycle_times_all" not in st.session_state:
             )
     st.session_state["cycle_times_all"] = pd.DataFrame(rows)
 
-for key in [
-    "df_raw",
-    "df_view",
-    "gantt_df",
-    "kpis",
-    "df_scenarios",
-    "best_scenario",
-    "df_ot",
-    "df_mix",
-    "last_piece",
-    "selected_prm",
-    "process_time",
-    "process_step",
-    "process_autoplay",
-]:
-    st.session_state.setdefault(key, None)
+for key, default_value in {
+    "df_raw": None,
+    "df_view": None,
+    "gantt_df": None,
+    "kpis": None,
+    "df_scenarios": None,
+    "best_scenario": None,
+    "df_ot": None,
+    "df_mix": None,
+    "last_piece": None,
+    "selected_prm": None,
+    "process_time": None,
+    "process_step": 10,
+    "process_autoplay": False,
+    "_next_process_time": None,
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default_value
+
 
 st.title("Simulateur et optimisation de la ligne P10")
 
@@ -183,6 +185,7 @@ with st.sidebar:
 
 tab1, tab2, tab3 = st.tabs(["Simulation", "Optimisation", "Table des temps"])
 
+
 with tab3:
     st.subheader(f"Temps de cycle – {PRM_LABELS[selected_prm]}")
     full_df = st.session_state["cycle_times_all"].copy()
@@ -200,6 +203,7 @@ with tab3:
         },
     )
     update_selected_cycle_times(selected_prm, edited.copy())
+
 
 with tab1:
     st.header(f"Simulation – {PRM_LABELS[selected_prm]}")
@@ -240,9 +244,12 @@ with tab1:
                 st.session_state["gantt_df"] = gantt_df
                 st.session_state["kpis"] = kpis
                 st.session_state["selected_prm"] = selected_prm
+
+                # réinitialisation lecture après nouvelle simulation
                 st.session_state["process_time"] = start_time
                 st.session_state["process_step"] = 10
                 st.session_state["process_autoplay"] = False
+                st.session_state["_next_process_time"] = None
 
             except ScenarioInfeasibleError as e:
                 st.session_state["df_raw"] = None
@@ -302,32 +309,42 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
         # ----------------------
-        # Vue process + lecture automatique
+        # Vue process + lecture automatique corrigée
         # ----------------------
         st.subheader("Vue process dans la journée")
 
+        # appliquer la prochaine valeur AVANT les widgets
+        if st.session_state["_next_process_time"] is not None:
+            st.session_state["process_time"] = st.session_state["_next_process_time"]
+            st.session_state["_next_process_time"] = None
+
+        if st.session_state["process_time"] is None:
+            st.session_state["process_time"] = start_time
+
         c1, c2, c3 = st.columns([1, 1, 1])
+
         with c1:
             step_min = st.selectbox(
                 "Pas de temps (min)",
                 [1, 5, 10, 15, 30],
                 index=2,
-                key="process_step_select",
+                key="process_step_widget",
             )
             st.session_state["process_step"] = step_min
 
         with c2:
-            autoplay = st.toggle("Lecture automatique", key="process_autoplay_toggle")
+            autoplay = st.toggle(
+                "Lecture automatique",
+                value=st.session_state["process_autoplay"],
+                key="process_autoplay_widget",
+            )
             st.session_state["process_autoplay"] = autoplay
 
         with c3:
             if st.button("Réinitialiser la lecture"):
-                st.session_state["process_time"] = start_time
+                st.session_state["_next_process_time"] = start_time
                 st.session_state["process_autoplay"] = False
-                st.session_state["process_autoplay_toggle"] = False
-
-        if st.session_state.get("process_time") is None:
-            st.session_state["process_time"] = start_time
+                st.rerun()
 
         current_minute = st.slider(
             "Choisir un instant dans la journée",
@@ -335,8 +352,9 @@ with tab1:
             max_value=end_time,
             value=int(st.session_state["process_time"]),
             step=step_min,
-            key="process_time_slider",
+            key="process_time_widget",
         )
+
         st.session_state["process_time"] = current_minute
 
         st.caption(f"Heure sélectionnée : {minutes_to_hhmm(current_minute)}")
@@ -365,13 +383,14 @@ with tab1:
                 else:
                     st.caption("—")
 
-        # lecture automatique
-        if st.session_state.get("process_autoplay", False):
+        # auto-play corrigé
+        if st.session_state["process_autoplay"]:
             next_value = current_minute + step_min
             if next_value > end_time:
                 next_value = start_time
+
+            st.session_state["_next_process_time"] = next_value
             time.sleep(0.6)
-            st.session_state["process_time"] = next_value
             st.rerun()
 
         excel_bytes = build_excel_bytes(
@@ -387,6 +406,7 @@ with tab1:
             file_name=f"simulation_{selected_prm}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
 
 with tab2:
     st.header(f"Optimisation – {PRM_LABELS[selected_prm]}")
