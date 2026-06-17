@@ -1,7 +1,12 @@
 import time
 import streamlit as st
 import pandas as pd
-import plot    ScenarioInfeasibleError,import plotly.express as px
+import plotAP,import plotly.express as px
+    PRM_LABELS,
+)
+from simulation import (
+    PRMSimulationConfig,
+    ScenarioInfeasibleError,
     build_gantt_source,
     compute_prm_kpis,
     format_simulation_df,
@@ -520,16 +525,3 @@ with tab2:
 
         elif st.session_state["df_scenarios"] is not None:
             st.warning("Aucun scénario n'a pu être évalué.")
-
-from config import (
-    DEFAULT_CYCLE_TIMES,
-    DEFAULT_END_TIME,
-    DEFAULT_FIRST_ARMS,
-    DEFAULT_LATENCE_MAX,
-    DEFAULT_START_TIMES,
-    FIXED_DECO_GAP,
-    FIXED_SEND_GAP,
-    PRM_LABELS,
-)
-from simulation import (
-    PRMSimulationConfig,
