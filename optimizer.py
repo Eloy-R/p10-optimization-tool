@@ -7,7 +7,6 @@ from simulation import PRMSimulationConfig, compute_prm_kpis, simulate_prm
 
 
 def _unique_orders(values: List[str]) -> List[Tuple[str, str, str, str]]:
-    """Génère les permutations uniques d'une liste de 4 produits."""
     return sorted(set(itertools.permutations(values, 4)))
 
 
@@ -29,26 +28,22 @@ def _score_row(
     latence_moy: float,
     latence_max_obs: float,
     taux_four: float,
-    overtime_min: int,
     pause_duration: int,
-    latence_max_cible: int,
+    latence_consigne: int,
 ) -> float:
     """
     Priorité demandée :
     1) Production maximale
-    2) Impact minimal sur la latence (max 20 min)
+    2) Impact minimal sur la latence
     3) Bonus léger sur le taux four
-    4) Léger malus overtime / pauses longues pour départager les égalités
+    4) Léger malus si on augmente trop la latence consigne / longues pauses
     """
-    penalty_lat_max = 10000 if latence_max_obs > latence_max_cible else 0
-
     score = (
         production * 1000
-        - penalty_lat_max
         - latence_moy * 10
-        - max(0.0, latence_max_obs - latence_max_cible) * 100
+        - max(0.0, latence_max_obs - 20) * 100
         + taux_four * 0.5
-        - overtime_min * 0.2
+        - latence_consigne * 1.0
         - pause_duration * 0.1
     )
     return round(score, 3)
@@ -59,21 +54,21 @@ def evaluate_optimization(
     start_time: int,
     end_time: int,
     base_config: dict,
-    latence_max: int,
+    latence_values: List[int],
     send_gap_min: int,
     deco_gap_min: int,
     pause_start_matin: int,
     pause_start_aprem: int,
     pause_durations: List[int],
-    overtime_values: List[int],
 ):
     """
-    Évalue toutes les combinaisons :
-    - pauses : 0, 30 ou 60 min le matin ET l'après-midi
+    Variables de l'optimisation :
+    - pauses : 0 / 30 / 60 min matin + soir
     - permutations des 4 bras
-    - overtime
+    - latence consigne testée
 
-    Sans modifier la simulation : on appelle simulate_prm(...) tel quel.
+    L'overtime n'est pas pris en compte dans le tableau des scénarios.
+    La simulation n'est pas modifiée : on appelle simulate_prm(...) tel quel.
     """
     base_arms_order = [
         base_config["arms_config"][1],
@@ -96,22 +91,22 @@ def evaluate_optimization(
             arms_config = _build_arms_config_from_order(order)
             order_label = " / ".join(order)
 
-            for overtime_min in overtime_values:
+            for latence_consigne in latence_values:
                 cfg = PRMSimulationConfig(
                     prm_name=prm_name,
                     start_time=start_time,
-                    end_time=end_time + overtime_min,
+                    end_time=end_time,
                     arms_config=arms_config,
                     cycle_times=base_config["cycle_times"],
                     first_arm=base_config["first_arm"],
                     send_gap_min=send_gap_min,
-                    latence_max=latence_max,
+                    latence_max=latence_consigne,
                     deco_gap_min=deco_gap_min,
                     pause_windows=pause_windows,
                 )
 
                 df = simulate_prm(cfg)
-                kpis = compute_prm_kpis(df, start_time, end_time + overtime_min)
+                kpis = compute_prm_kpis(df, start_time, end_time)
 
                 production = int(kpis["production"])
                 lat_moy = float(kpis["latence_moy"])
@@ -123,9 +118,8 @@ def evaluate_optimization(
                     latence_moy=lat_moy,
                     latence_max_obs=lat_max_obs,
                     taux_four=taux_four,
-                    overtime_min=overtime_min,
                     pause_duration=pause_duration,
-                    latence_max_cible=latence_max,
+                    latence_consigne=latence_consigne,
                 )
 
                 records.append(
@@ -136,52 +130,31 @@ def evaluate_optimization(
                         "Bras 3": order[2],
                         "Bras 4": order[3],
                         "Ordre bras": order_label,
-                        "Overtime (min)": overtime_min,
+                        "Latence consigne (min)": latence_consigne,
                         "Production": production,
                         "Latence moy": round(lat_moy, 3),
                         "Latence max observée": round(lat_max_obs, 3),
                         "Taux four (%)": round(taux_four, 3),
                         "Score": score,
-                        "Statut": "OK" if lat_max_obs <= latence_max else "Latence > limite",
+                        "Statut": "OK" if lat_max_obs <= 20 else "Latence > 20",
                     }
                 )
 
     df_scenarios = pd.DataFrame(records)
     if df_scenarios.empty:
-        return df_scenarios, None, None, pd.DataFrame()
+        return df_scenarios, None
 
-    # Tri hiérarchique conforme à votre priorité métier
-    df_scenarios["_ok"] = (df_scenarios["Latence max observée"] <= latence_max).astype(int)
+    # Tri hiérarchique demandé :
+    # production max > latence moyenne min > taux four max > latence consigne min > pause min
+    df_scenarios["_ok"] = (df_scenarios["Latence max observée"] <= 20).astype(int)
     df_scenarios = df_scenarios.sort_values(
-        by=["_ok", "Production", "Latence moy", "Taux four (%)", "Overtime (min)", "Pause (min)"],
+        by=["_ok", "Production", "Latence moy", "Taux four (%)", "Latence consigne (min)", "Pause (min)"],
         ascending=[False, False, True, False, True, True],
     ).drop(columns=["_ok"]).reset_index(drop=True)
 
     best = None
-    best_no_overtime = None
-
-    ok_df = df_scenarios[df_scenarios["Latence max observée"] <= latence_max].copy()
+    ok_df = df_scenarios[df_scenarios["Latence max observée"] <= 20]
     if not ok_df.empty:
         best = ok_df.iloc[0].to_dict()
-        no_ot_df = ok_df[ok_df["Overtime (min)"] == 0]
-        if not no_ot_df.empty:
-            best_no_overtime = no_ot_df.iloc[0].to_dict()
 
-    # Résumé overtime : meilleure production atteignable par niveau d'overtime
-    grouped = (
-        df_scenarios.groupby("Overtime (min)", as_index=False)
-        .agg(
-            {
-                "Production": "max",
-                "Latence moy": "min",
-                "Latence max observée": "min",
-                "Taux four (%)": "max",
-            }
-        )
-        .rename(columns={"Production": "Production max"})
-        .sort_values("Overtime (min)")
-        .reset_index(drop=True)
-    )
-
-    return df_scenarios, best, best_no_overtime, grouped
-
+    return df_scenarios, best
