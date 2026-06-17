@@ -390,4 +390,25 @@ def apply_pause_windows(start_op: int, duration: int, pause_windows: List[Tuple[
     """
     reason = ""
     changed = True
-    while changed:
+    
+while changed:
+        changed = False
+        end_temp = start_op + duration
+
+        for p_start, p_end in sorted(pause_windows):
+            # démarre pendant la pause
+            if p_start <= start_op < p_end:
+                start_op = p_end
+                reason = "Pause"
+                changed = True
+                break
+
+            # chevauche la pause
+            if start_op < p_start and end_temp > p_start:
+                start_op = p_end
+                reason = "Pause"
+                changed = True
+                break
+
+    return start_op, reason
+
