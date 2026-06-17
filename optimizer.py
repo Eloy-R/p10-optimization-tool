@@ -1,5 +1,5 @@
 import itertools
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import pandas as pd
 
@@ -17,7 +17,6 @@ def _pause_windows_from_duration(
 ):
     if duration_min <= 0:
         return []
-
     return [
         (pause_start_matin, pause_start_matin + duration_min),
         (pause_start_aprem, pause_start_aprem + duration_min),
@@ -37,7 +36,7 @@ def _score_row(
     latence_consigne: int,
 ) -> float:
     """
-    Priorité demandée :
+    Priorité métier :
     1) Production maximale
     2) Impact minimal sur la latence
     3) Bonus léger sur le taux four
@@ -67,13 +66,12 @@ def evaluate_optimization(
     pause_durations: List[int],
 ):
     """
-    Variables de l'optimisation :
+    Variables du tableau principal :
     - pauses : 0 / 30 / 60 min matin + soir
     - permutations des 4 bras
     - latence consigne testée
 
-    L'overtime n'est pas pris en compte dans le tableau des scénarios.
-    La simulation n'est pas modifiée : on appelle simulate_prm(...) tel quel.
+    L'overtime n'est PAS pris en compte dans le tableau principal.
     """
     base_arms_order = [
         base_config["arms_config"][1],
@@ -149,18 +147,9 @@ def evaluate_optimization(
     if df_scenarios.empty:
         return df_scenarios, None
 
-    # Tri hiérarchique demandé :
-    # production max > latence moyenne min > taux four max > latence consigne min > pause min
     df_scenarios["_ok"] = (df_scenarios["Latence max observée"] <= 20).astype(int)
     df_scenarios = df_scenarios.sort_values(
-        by=[
-            "_ok",
-            "Production",
-            "Latence moy",
-            "Taux four (%)",
-            "Latence consigne (min)",
-            "Pause (min)",
-        ],
+        by=["_ok", "Production", "Latence moy", "Taux four (%)", "Latence consigne (min)", "Pause (min)"],
         ascending=[False, False, True, False, True, True],
     ).drop(columns=["_ok"]).reset_index(drop=True)
 
@@ -171,3 +160,83 @@ def evaluate_optimization(
 
     return df_scenarios, best
 
+
+def build_pause_latency_curve(df_scenarios: pd.DataFrame) -> pd.DataFrame:
+    """
+    Retourne une ligne par couple (Pause, Latence consigne)
+    en gardant le meilleur scénario pour ce couple.
+    """
+    if df_scenarios is None or df_scenarios.empty:
+        return pd.DataFrame()
+
+    work = df_scenarios.copy()
+    work["_ok"] = (work["Latence max observée"] <= 20).astype(int)
+    work = work.sort_values(
+        by=["Pause (min)", "Latence consigne (min)", "_ok", "Production", "Latence moy", "Taux four (%)"],
+        ascending=[True, True, False, False, True, False],
+    )
+    best_curve = work.groupby(["Pause (min)", "Latence consigne (min)"], as_index=False).first()
+    return best_curve.drop(columns=["_ok"])
+
+
+def evaluate_overtime_summary_from_best(
+    best_scenario: Optional[dict],
+    prm_name: str,
+    start_time: int,
+    end_time: int,
+    base_config: dict,
+    send_gap_min: int,
+    deco_gap_min: int,
+    pause_start_matin: int,
+    pause_start_aprem: int,
+    overtime_values: List[int],
+) -> pd.DataFrame:
+    """
+    Calcule l'impact de l'overtime sur LE meilleur scénario de base.
+    Cette synthèse est ANNEXE : elle n'entre pas dans le classement principal.
+    """
+    if best_scenario is None:
+        return pd.DataFrame()
+
+    pause_duration = int(best_scenario["Pause (min)"])
+    pause_windows = _pause_windows_from_duration(
+        pause_start_matin,
+        pause_start_aprem,
+        pause_duration,
+    )
+    arms_config = {
+        1: best_scenario["Bras 1"],
+        2: best_scenario["Bras 2"],
+        3: best_scenario["Bras 3"],
+        4: best_scenario["Bras 4"],
+    }
+    latence_consigne = int(best_scenario["Latence consigne (min)"])
+
+    rows = []
+    for overtime in overtime_values:
+        cfg = PRMSimulationConfig(
+            prm_name=prm_name,
+            start_time=start_time,
+            end_time=end_time + overtime,
+            arms_config=arms_config,
+            cycle_times=base_config["cycle_times"],
+            first_arm=base_config["first_arm"],
+            send_gap_min=send_gap_min,
+            latence_max=latence_consigne,
+            deco_gap_min=deco_gap_min,
+            pause_windows=pause_windows,
+        )
+        df = simulate_prm(cfg)
+        kpis = compute_prm_kpis(df, start_time, end_time + overtime)
+
+        rows.append(
+            {
+                "Overtime (min)": overtime,
+                "Production": int(kpis["production"]),
+                "Latence moy": round(float(kpis["latence_moy"]), 3),
+                "Latence max observée": round(float(kpis["latence_max_obs"]), 3),
+                "Taux four (%)": round(float(kpis["taux_four"]), 3),
+            }
+        )
+
+    return pd.DataFrame(rows)
