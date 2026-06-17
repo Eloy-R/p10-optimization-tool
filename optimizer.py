@@ -10,9 +10,14 @@ def _unique_orders(values: List[str]) -> List[Tuple[str, str, str, str]]:
     return sorted(set(itertools.permutations(values, 4)))
 
 
-def _pause_windows_from_duration(pause_start_matin: int, pause_start_aprem: int, duration_min: int):
+def _pause_windows_from_duration(
+    pause_start_matin: int,
+    pause_start_aprem: int,
+    duration_min: int,
+):
     if duration_min <= 0:
         return []
+
     return [
         (pause_start_matin, pause_start_matin + duration_min),
         (pause_start_aprem, pause_start_aprem + duration_min),
@@ -148,7 +153,14 @@ def evaluate_optimization(
     # production max > latence moyenne min > taux four max > latence consigne min > pause min
     df_scenarios["_ok"] = (df_scenarios["Latence max observée"] <= 20).astype(int)
     df_scenarios = df_scenarios.sort_values(
-        by=["_ok", "Production", "Latence moy", "Taux four (%)", "Latence consigne (min)", "Pause (min)"],
+        by=[
+            "_ok",
+            "Production",
+            "Latence moy",
+            "Taux four (%)",
+            "Latence consigne (min)",
+            "Pause (min)",
+        ],
         ascending=[False, False, True, False, True, True],
     ).drop(columns=["_ok"]).reset_index(drop=True)
 
@@ -158,3 +170,4 @@ def evaluate_optimization(
         best = ok_df.iloc[0].to_dict()
 
     return df_scenarios, best
+
