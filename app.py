@@ -22,20 +22,21 @@ from simulation import (
     get_process_state_at_time,
     simulate_prm,
 )
-from optimizer import evaluate_mixes, evaluate_overtime, evaluate_scenarios
+from optimizer import evaluate_optimization
 from exports import build_excel_bytes
 
 st.set_page_config(page_title="Simulateur P10", layout="wide")
 
 
+# =========================================================
+# OUTILS
+# =========================================================
 def minutes_to_hhmm(m: int) -> str:
     return f"{int(m // 60):02d}:{int(m % 60):02d}"
 
 
 def get_start_time(day_type: str) -> int:
-    if day_type == "Lundi":
-        return DEFAULT_START_TIMES["Lundi"]
-    return DEFAULT_START_TIMES["Autres jours"]
+    return DEFAULT_START_TIMES["Lundi"] if day_type == "Lundi" else DEFAULT_START_TIMES["Autres jours"]
 
 
 def cycle_times_from_editor(df_editor: pd.DataFrame) -> dict:
@@ -60,7 +61,6 @@ def update_selected_cycle_times(prm_name: str, edited_selected: pd.DataFrame):
 
 def build_prm_form(prm_name: str, available_products, default_first_arm: int):
     st.markdown(f"### Paramètres {PRM_LABELS[prm_name]}")
-
     first_arm = st.selectbox(
         f"Premier bras {PRM_LABELS[prm_name]}",
         [1, 2, 3, 4],
@@ -71,7 +71,6 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
     st.caption("Affectation produit / bras")
     cols = st.columns(4)
     arms_config = {}
-
     for arm in [1, 2, 3, 4]:
         with cols[arm - 1]:
             default_index = min(arm - 1, len(available_products) - 1) if available_products else 0
@@ -81,13 +80,12 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
                 key=f"{prm_name}_arm_{arm}",
                 index=default_index,
             )
-
     return first_arm, arms_config
 
 
-# ----------------------
-# Initialisation session_state
-# ----------------------
+# =========================================================
+# SESSION STATE
+# =========================================================
 if "cycle_times_all" not in st.session_state:
     rows = []
     for prm_name, products in DEFAULT_CYCLE_TIMES.items():
@@ -110,8 +108,8 @@ DEFAULTS = {
     "kpis": None,
     "df_scenarios": None,
     "best_scenario": None,
-    "df_ot": None,
-    "df_mix": None,
+    "best_no_overtime": None,
+    "df_ot_summary": None,
     "last_piece": None,
     "selected_prm": None,
     # viewer process
@@ -120,12 +118,14 @@ DEFAULTS = {
     "process_autoplay_widget": False,
     "_next_process_time": None,
 }
-
 for key, value in DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
 
+# =========================================================
+# INTERFACE GENERALE
+# =========================================================
 st.title("Simulateur et optimisation de la ligne P10")
 
 with st.sidebar:
@@ -151,42 +151,42 @@ with st.sidebar:
     st.caption(f"Marge mini entre deux décoffrages fixée à {FIXED_DECO_GAP} min.")
 
     st.subheader("Pauses")
-    pause_midi_active = st.checkbox("Pause midi", True)
-    pause_pm_active = st.checkbox("Pause après-midi", True)
+    pause_matin_active = st.checkbox("Pause matin / midi", True)
+    pause_aprem_active = st.checkbox("Pause après-midi", True)
 
     col1, col2 = st.columns(2)
     with col1:
-        pause_midi_start = st.time_input(
-            "Début pause midi",
+        pause_matin_start = st.time_input(
+            "Début pause matin / midi",
             value=pd.Timestamp("12:00").to_pydatetime().time(),
         )
-        pause_pm_start = st.time_input(
-            "Début pause PM",
+        pause_aprem_start = st.time_input(
+            "Début pause après-midi",
             value=pd.Timestamp("15:00").to_pydatetime().time(),
         )
     with col2:
-        pause_midi_end = st.time_input(
-            "Fin pause midi",
+        pause_matin_end = st.time_input(
+            "Fin pause matin / midi",
             value=pd.Timestamp("13:00").to_pydatetime().time(),
         )
-        pause_pm_end = st.time_input(
-            "Fin pause PM",
+        pause_aprem_end = st.time_input(
+            "Fin pause après-midi",
             value=pd.Timestamp("16:00").to_pydatetime().time(),
         )
 
     pause_windows = []
-    if pause_midi_active:
+    if pause_matin_active:
         pause_windows.append(
             (
-                pause_midi_start.hour * 60 + pause_midi_start.minute,
-                pause_midi_end.hour * 60 + pause_midi_end.minute,
+                pause_matin_start.hour * 60 + pause_matin_start.minute,
+                pause_matin_end.hour * 60 + pause_matin_end.minute,
             )
         )
-    if pause_pm_active:
+    if pause_aprem_active:
         pause_windows.append(
             (
-                pause_pm_start.hour * 60 + pause_pm_start.minute,
-                pause_pm_end.hour * 60 + pause_pm_end.minute,
+                pause_aprem_start.hour * 60 + pause_aprem_start.minute,
+                pause_aprem_end.hour * 60 + pause_aprem_end.minute,
             )
         )
 
@@ -194,6 +194,9 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["Simulation", "Optimisation", "Table des temps"])
 
 
+# =========================================================
+# ONGLET TEMPS DE CYCLE
+# =========================================================
 with tab3:
     st.subheader(f"Temps de cycle – {PRM_LABELS[selected_prm]}")
     full_df = st.session_state["cycle_times_all"].copy()
@@ -213,6 +216,9 @@ with tab3:
     update_selected_cycle_times(selected_prm, edited.copy())
 
 
+# =========================================================
+# ONGLET SIMULATION
+# =========================================================
 with tab1:
     st.header(f"Simulation – {PRM_LABELS[selected_prm]}")
     cycle_times_all = cycle_times_from_editor(st.session_state["cycle_times_all"])
@@ -264,7 +270,6 @@ with tab1:
                 st.session_state["df_view"] = None
                 st.session_state["gantt_df"] = None
                 st.session_state["kpis"] = None
-
                 st.error(
                     "Scénario infaisable : la latence maximale ne peut pas être respectée "
                     "avec les paramètres actuels."
@@ -276,7 +281,6 @@ with tab1:
                 st.session_state["df_view"] = None
                 st.session_state["gantt_df"] = None
                 st.session_state["kpis"] = None
-
                 st.error("Une erreur technique inattendue est survenue pendant la simulation.")
                 st.code(str(e), language="text")
 
@@ -317,11 +321,10 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
         # ----------------------
-        # Vue process + lecture automatique corrigée
+        # Vue process + lecture automatique
         # ----------------------
         st.subheader("Vue process dans la journée")
 
-        # appliquer la prochaine valeur AVANT la création des widgets
         if st.session_state["_next_process_time"] is not None:
             st.session_state["process_time_widget"] = st.session_state["_next_process_time"]
             st.session_state["_next_process_time"] = None
@@ -364,7 +367,7 @@ with tab1:
 
         process_state = get_process_state_at_time(
             st.session_state["df_raw"],
-            current_minute
+            current_minute,
         )
 
         zone_cols = st.columns(5)
@@ -386,12 +389,10 @@ with tab1:
                 else:
                     st.caption("—")
 
-        # lecture automatique
         if autoplay:
             next_value = current_minute + step_min
             if next_value > end_time:
                 next_value = start_time
-
             st.session_state["_next_process_time"] = next_value
             time.sleep(0.6)
             st.rerun()
@@ -399,7 +400,7 @@ with tab1:
         excel_bytes = build_excel_bytes(
             simulation_df=st.session_state["df_view"],
             scenarios_df=st.session_state["df_scenarios"],
-            overtime_df=st.session_state["df_ot"],
+            overtime_df=st.session_state["df_ot_summary"],
             mix_df=st.session_state["df_mix"],
             cycle_times_df=st.session_state["cycle_times_all"],
         )
@@ -411,19 +412,27 @@ with tab1:
         )
 
 
+# =========================================================
+# ONGLET OPTIMISATION
+# =========================================================
 with tab2:
     st.header(f"Optimisation – {PRM_LABELS[selected_prm]}")
 
-    if (
-        st.session_state["df_view"] is None
-        or st.session_state["selected_prm"] != selected_prm
-    ):
-        st.info("Lancez d'abord une simulation faisable pour cette PRM.")
-    else:
-        if st.button("Lancer l'optimisation"):
-            cycle_times_all = cycle_times_from_editor(st.session_state["cycle_times_all"])
-            available_products = list(cycle_times_all.get(selected_prm, {}).keys())
+    cycle_times_all = cycle_times_from_editor(st.session_state["cycle_times_all"])
+    available_products = list(cycle_times_all.get(selected_prm, {}).keys())
 
+    if not available_products:
+        st.info("Définissez d'abord les temps de cycle pour cette PRM.")
+    else:
+        st.write(
+            "L'optimisation compare : **0 / 30 / 60 min** de pause (matin + après-midi), "
+            "les **permutations des 4 bras**, et l'**overtime**."
+        )
+        st.write(
+            "Priorité : **production maximale**, puis **impact minimal sur la latence**, puis **bonus léger sur le taux four**."
+        )
+
+        if st.button("Lancer l'optimisation"):
             base_config = {
                 "arms_config": {
                     1: st.session_state.get(f"{selected_prm}_arm_1", available_products[0]),
@@ -438,81 +447,93 @@ with tab2:
                 ),
             }
 
-            df_scenarios, best = evaluate_scenarios(
-                prm_name=selected_prm,
-                start_time=start_time,
-                end_time=end_time,
-                base_config=base_config,
-                send_gap_values=[send_gap_min],
-                latence_values=[latence_max],
-                deco_gap_values=[deco_gap_min],
-                pause_sets=[
-                    ("Sans pause", []),
-                    ("Midi", [(12 * 60, 13 * 60)]),
-                    ("Midi+PM", [(12 * 60, 13 * 60), (15 * 60, 16 * 60)]),
-                ],
-            )
-            st.session_state["df_scenarios"] = df_scenarios
-            st.session_state["best_scenario"] = best
+            pause_start_matin = pause_matin_start.hour * 60 + pause_matin_start.minute
+            pause_start_aprem = pause_aprem_start.hour * 60 + pause_aprem_start.minute
 
-            df_ot, best_extra, last_piece = evaluate_overtime(
+            df_scenarios, best, best_no_overtime, df_ot_summary = evaluate_optimization(
                 prm_name=selected_prm,
                 start_time=start_time,
                 end_time=end_time,
                 base_config=base_config,
-                send_gap_min=send_gap_min,
                 latence_max=latence_max,
+                send_gap_min=send_gap_min,
                 deco_gap_min=deco_gap_min,
-                pause_windows=pause_windows,
+                pause_start_matin=pause_start_matin,
+                pause_start_aprem=pause_start_aprem,
+                pause_durations=[0, 30, 60],
                 overtime_values=[0, 15, 30, 45, 60],
             )
-            st.session_state["df_ot"] = df_ot
-            st.session_state["last_piece"] = last_piece
 
-            df_mix = evaluate_mixes(
-                prm_name=selected_prm,
-                start_time=start_time,
-                end_time=end_time,
-                base_config=base_config,
-                product_options=available_products,
-                send_gap_min=send_gap_min,
-                latence_max=latence_max,
-                deco_gap_min=deco_gap_min,
-                pause_windows=pause_windows,
-            )
-            st.session_state["df_mix"] = df_mix
+            st.session_state["df_scenarios"] = df_scenarios
+            st.session_state["best_scenario"] = best
+            st.session_state["best_no_overtime"] = best_no_overtime
+            st.session_state["df_ot_summary"] = df_ot_summary
 
-        if st.session_state["df_scenarios"] is not None:
-            st.subheader("Scénarios")
-            st.dataframe(st.session_state["df_scenarios"], use_container_width=True)
-
+        if st.session_state["df_scenarios"] is not None and not st.session_state["df_scenarios"].empty:
             best = st.session_state["best_scenario"]
-            if best:
+            best_no_ot = st.session_state["best_no_overtime"]
+            df_ot_summary = st.session_state["df_ot_summary"]
+            df_scenarios = st.session_state["df_scenarios"]
+
+            c1, c2, c3, c4 = st.columns(4)
+            if best is not None:
+                c1.metric("Meilleur scénario – Production", int(best["Production"]))
+                c2.metric("Meilleur scénario – Latence moy", round(best["Latence moy"], 2))
+                c3.metric("Meilleur scénario – Taux four (%)", round(best["Taux four (%)"], 1))
+                c4.metric("Meilleur scénario – Overtime (min)", int(best["Overtime (min)"]))
+
+            if best is not None:
                 st.success(
-                    f"Meilleur scénario : {best['Scenario']} | "
-                    f"Production {best['Production']} | "
-                    f"Latence moy {best['Latence moy']} | "
-                    f"Taux four {best['Taux four (%)']}%"
+                    f"Meilleur scénario : pause {best['Pause (min)']} min matin + après-midi | "
+                    f"ordre {best['Ordre bras']} | overtime {best['Overtime (min)']} min | "
+                    f"production {best['Production']} | latence moy {best['Latence moy']:.2f} | "
+                    f"latence max obs {best['Latence max observée']:.2f} | taux four {best['Taux four (%)']:.1f}%"
                 )
 
-                fig = px.scatter(
-                    st.session_state["df_scenarios"],
-                    x="Taux four (%)",
-                    y="Production",
-                    color="Pause",
-                    hover_data=["Statut", "Raison"],
+            if best_no_ot is not None:
+                st.info(
+                    f"Meilleur scénario sans overtime : pause {best_no_ot['Pause (min)']} min matin + après-midi | "
+                    f"ordre {best_no_ot['Ordre bras']} | production {best_no_ot['Production']} | "
+                    f"latence moy {best_no_ot['Latence moy']:.2f} | taux four {best_no_ot['Taux four (%)']:.1f}%"
                 )
-                st.plotly_chart(fig, use_container_width=True)
 
-        if st.session_state["df_ot"] is not None:
-            st.subheader("Overtime intelligent")
-            st.dataframe(st.session_state["df_ot"], use_container_width=True)
+            st.subheader("Tableau des scénarios testés")
+            st.dataframe(df_scenarios, use_container_width=True)
 
-            if st.session_state["last_piece"] is not None:
-                st.subheader("Dernière pièce ajoutée")
-                st.dataframe(st.session_state["last_piece"], use_container_width=True)
+            st.subheader("Impact de l'overtime")
+            st.dataframe(df_ot_summary, use_container_width=True)
 
-        if st.session_state["df_mix"] is not None:
-            st.subheader("Mix annuel")
-            st.dataframe(st.session_state["df_mix"], use_container_width=True)
+            if not df_ot_summary.empty:
+                fig_ot = px.line(
+                    df_ot_summary,
+                    x="Overtime (min)",
+                    y="Production max",
+                    markers=True,
+                    title="Impact de l'overtime sur la production maximale",
+                )
+                st.plotly_chart(fig_ot, use_container_width=True)
 
+            fig_prod = px.scatter(
+                df_scenarios,
+                x="Latence moy",
+                y="Production",
+                color="Pause (min)",
+                symbol="Overtime (min)",
+                hover_data=["Ordre bras", "Taux four (%)", "Score"],
+                title="Production vs latence moyenne",
+            )
+            st.plotly_chart(fig_prod, use_container_width=True)
+
+            fig_four = px.scatter(
+                df_scenarios,
+                x="Taux four (%)",
+                y="Production",
+                color="Pause (min)",
+                symbol="Overtime (min)",
+                hover_data=["Ordre bras", "Latence moy", "Score"],
+                title="Production vs taux four",
+            )
+            st.plotly_chart(fig_four, use_container_width=True)
+
+        elif st.session_state["df_scenarios"] is not None:
+            st.warning("Aucun scénario n'a pu être évalué.")
