@@ -33,7 +33,9 @@ def minutes_to_hhmm(m: int) -> str:
 
 
 def get_start_time(day_type: str) -> int:
-    return DEFAULT_START_TIMES["Lundi"] if day_type == "Lundi" else DEFAULT_START_TIMES["Autres jours"]
+    if day_type == "Lundi":
+        return DEFAULT_START_TIMES["Lundi"]
+    return DEFAULT_START_TIMES["Autres jours"]
 
 
 def cycle_times_from_editor(df_editor: pd.DataFrame) -> dict:
@@ -58,6 +60,7 @@ def update_selected_cycle_times(prm_name: str, edited_selected: pd.DataFrame):
 
 def build_prm_form(prm_name: str, available_products, default_first_arm: int):
     st.markdown(f"### Paramètres {PRM_LABELS[prm_name]}")
+
     first_arm = st.selectbox(
         f"Premier bras {PRM_LABELS[prm_name]}",
         [1, 2, 3, 4],
@@ -68,6 +71,7 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
     st.caption("Affectation produit / bras")
     cols = st.columns(4)
     arms_config = {}
+
     for arm in [1, 2, 3, 4]:
         with cols[arm - 1]:
             default_index = min(arm - 1, len(available_products) - 1) if available_products else 0
@@ -77,6 +81,7 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
                 key=f"{prm_name}_arm_{arm}",
                 index=default_index,
             )
+
     return first_arm, arms_config
 
 
@@ -98,7 +103,7 @@ if "cycle_times_all" not in st.session_state:
             )
     st.session_state["cycle_times_all"] = pd.DataFrame(rows)
 
-for key, default_value in {
+DEFAULTS = {
     "df_raw": None,
     "df_view": None,
     "gantt_df": None,
@@ -109,13 +114,16 @@ for key, default_value in {
     "df_mix": None,
     "last_piece": None,
     "selected_prm": None,
-    "process_time": None,
-    "process_step": 10,
-    "process_autoplay": False,
+    # viewer process
+    "process_time_widget": None,
+    "process_step_widget": 10,
+    "process_autoplay_widget": False,
     "_next_process_time": None,
-}.items():
+}
+
+for key, value in DEFAULTS.items():
     if key not in st.session_state:
-        st.session_state[key] = default_value
+        st.session_state[key] = value
 
 
 st.title("Simulateur et optimisation de la ligne P10")
@@ -245,10 +253,10 @@ with tab1:
                 st.session_state["kpis"] = kpis
                 st.session_state["selected_prm"] = selected_prm
 
-                # réinitialisation lecture après nouvelle simulation
-                st.session_state["process_time"] = start_time
-                st.session_state["process_step"] = 10
-                st.session_state["process_autoplay"] = False
+                # reset viewer après nouvelle simulation
+                st.session_state["process_time_widget"] = start_time
+                st.session_state["process_step_widget"] = 10
+                st.session_state["process_autoplay_widget"] = False
                 st.session_state["_next_process_time"] = None
 
             except ScenarioInfeasibleError as e:
@@ -313,49 +321,44 @@ with tab1:
         # ----------------------
         st.subheader("Vue process dans la journée")
 
-        # appliquer la prochaine valeur AVANT les widgets
+        # appliquer la prochaine valeur AVANT la création des widgets
         if st.session_state["_next_process_time"] is not None:
-            st.session_state["process_time"] = st.session_state["_next_process_time"]
+            st.session_state["process_time_widget"] = st.session_state["_next_process_time"]
             st.session_state["_next_process_time"] = None
 
-        if st.session_state["process_time"] is None:
-            st.session_state["process_time"] = start_time
+        if st.session_state["process_time_widget"] is None:
+            st.session_state["process_time_widget"] = start_time
 
         c1, c2, c3 = st.columns([1, 1, 1])
 
         with c1:
+            if st.button("Réinitialiser la lecture"):
+                st.session_state["process_time_widget"] = start_time
+                st.session_state["process_autoplay_widget"] = False
+                st.session_state["_next_process_time"] = None
+                st.rerun()
+
+        with c2:
             step_min = st.selectbox(
                 "Pas de temps (min)",
                 [1, 5, 10, 15, 30],
-                index=2,
                 key="process_step_widget",
             )
-            st.session_state["process_step"] = step_min
-
-        with c2:
-            autoplay = st.toggle(
-                "Lecture automatique",
-                value=st.session_state["process_autoplay"],
-                key="process_autoplay_widget",
-            )
-            st.session_state["process_autoplay"] = autoplay
 
         with c3:
-            if st.button("Réinitialiser la lecture"):
-                st.session_state["_next_process_time"] = start_time
-                st.session_state["process_autoplay"] = False
-                st.rerun()
+            autoplay = st.toggle(
+                "Lecture automatique",
+                key="process_autoplay_widget",
+            )
 
         current_minute = st.slider(
             "Choisir un instant dans la journée",
             min_value=start_time,
             max_value=end_time,
-            value=int(st.session_state["process_time"]),
+            value=int(st.session_state["process_time_widget"]),
             step=step_min,
             key="process_time_widget",
         )
-
-        st.session_state["process_time"] = current_minute
 
         st.caption(f"Heure sélectionnée : {minutes_to_hhmm(current_minute)}")
 
@@ -383,8 +386,8 @@ with tab1:
                 else:
                     st.caption("—")
 
-        # auto-play corrigé
-        if st.session_state["process_autoplay"]:
+        # lecture automatique
+        if autoplay:
             next_value = current_minute + step_min
             if next_value > end_time:
                 next_value = start_time
@@ -512,3 +515,4 @@ with tab2:
         if st.session_state["df_mix"] is not None:
             st.subheader("Mix annuel")
             st.dataframe(st.session_state["df_mix"], use_container_width=True)
+
