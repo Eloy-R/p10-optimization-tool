@@ -383,7 +383,7 @@ with tab1:
 
         with c2:
             step_min = st.selectbox(
-                "Pas de temps (min)",
+                "Lapse de temps (min)",
                 [1, 5, 10, 15, 20, 30],
                 key="process_step_widget",
             )
