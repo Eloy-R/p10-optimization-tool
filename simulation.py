@@ -1,4 +1,43 @@
-from dataclasses import dataclassfrom dataclasses import dat
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+import pandas as pd
+
+
+class ScenarioInfeasibleError(Exception):
+    """Conservée pour compatibilité avec app.py / optimizer.py."""
+    def __init__(self, message: str, details: Optional[dict] = None):
+        super().__init__(message)
+        self.details = details or {}
+
+
+def format_time(minutes: int) -> str:
+    return f"{int(minutes // 60):02d}:{int(minutes % 60):02d}"
+
+
+def to_datetime(minutes: int) -> datetime:
+    return datetime(2024, 1, 1, int(minutes // 60), int(minutes % 60))
+
+
+def normalize_arm_order(first_arm: int) -> List[int]:
+    arms = [1, 2, 3, 4]
+    idx = arms.index(first_arm)
+    return arms[idx:] + arms[:idx]
+
+
+def apply_pause_windows(
+    start_op: int,
+    duration: int,
+    pause_windows: List[Tuple[int, int]],
+) -> Tuple[int, str]:
+    """
+    Si l'opération démarre pendant une pause ou la chevauche,
+    le démarrage est décalé à la fin de la pause.
+    """
+    reason = ""
+    changed = True
+    while changed:
+        changed = False
         end_temp = start_op + duration
         for p_start, p_end in sorted(pause_windows):
             if p_start <= start_op < p_end:
@@ -39,23 +78,19 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
     - Avant déco : 1 capacité
     - Déco : 1 capacité
 
-    La latence reste pilotée comme avant : si la latence projetée dépasse la consigne,
-    on retarde l'entrée au four de la pièce courante.
+    La latence reste pilotée comme avant :
+    si la latence projetée dépasse la consigne, on retarde l'entrée au four.
     """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
 
-    # disponibilités des ressources / secteurs
     arm_available = {arm: config.start_time for arm in config.arms_config}
-    furnace_available = config.start_time               # 1 pièce max au four
-    next_send_time = config.start_time                 # cadence minimale entre envois
+    furnace_available = config.start_time
+    next_send_time = config.start_time
 
-    cooling_zone_available = {
-        "Z1": config.start_time,
-        "Z2": config.start_time,
-    }                                                  # zones physiquement libres
-    predeco_available = config.start_time              # 1 pièce max en avant déco
-    deco_available = config.start_time                 # 1 pièce max au déco
+    cooling_zone_available = {"Z1": config.start_time, "Z2": config.start_time}
+    predeco_available = config.start_time
+    deco_available = config.start_time
 
     results = []
     cycle_idx = 0
@@ -77,22 +112,19 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
 
         start_four = max(next_send_time, arm_available[arm], furnace_available)
 
-        # On décale l'amont tant que la latence dépasse la limite.
-        # Pour un start_four donné, on choisit le secteur qui minimise le démarrage déco.
         while True:
             end_four = start_four + heat
-
             best_plan = None
+
             for zone_name in ["Z1", "Z2"]:
-                # La pièce ne peut entrer dans la zone que lorsqu'elle est libre.
+                # La pièce entre en zone quand la zone est libre.
                 start_zone = max(end_four, cooling_zone_available[zone_name])
                 cool_finish = start_zone + cool
 
-                # La pièce reste physiquement en zone de refroidissement jusqu'à ce que
-                # l'emplacement Avant déco soit libre.
+                # La pièce reste physiquement dans la zone de refroidissement jusqu'à ce
+                # que l'emplacement Avant déco soit libre.
                 enter_predeco = max(cool_finish, predeco_available)
 
-                # Le début de déco dépend ensuite du poste manuel et des pauses.
                 raw_start_deco = max(enter_predeco, deco_available)
                 start_deco, pause_reason = apply_pause_windows(raw_start_deco, deco, pause_windows)
                 end_deco = start_deco + deco
@@ -112,7 +144,7 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
                 if best_plan is None:
                     best_plan = plan
                 else:
-                    # priorité au départ déco le plus tôt, puis latence la plus faible
+                    # priorité au début de déco le plus tôt, puis à la latence la plus faible
                     if (plan["start_deco"], plan["latence"], plan["end_deco"]) < (
                         best_plan["start_deco"],
                         best_plan["latence"],
@@ -136,13 +168,11 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         latence = best_plan["latence"]
         pause_reason = best_plan["pause_reason"]
 
-        # borne fin de journée : on retient uniquement les pièces finies au déco
         if end_deco > config.end_time:
             break
 
-        # temps physique dans les secteurs
-        zone_occupation = enter_predeco - start_zone           # inclut éventuel blocage après fin de refroidissement
-        predeco_occupation = start_deco - enter_predeco         # attente en avant déco
+        zone_occupation = enter_predeco - start_zone
+        predeco_occupation = start_deco - enter_predeco
 
         results.append(
             {
@@ -152,8 +182,8 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
                 "Début Four (min)": start_four,
                 "Fin Four (min)": end_four,
                 "Début Refroidissement (min)": start_zone,
-                "Fin Refroidissement (min)": cool_finish,              # fin réelle du refroidissement
-                "Fin Occupation Refroidissement (min)": enter_predeco, # sortie physique de la zone
+                "Fin Refroidissement (min)": cool_finish,
+                "Fin Occupation Refroidissement (min)": enter_predeco,
                 "Début Avant Déco (min)": enter_predeco,
                 "Fin Avant Déco (min)": start_deco,
                 "Début Déco (min)": start_deco,
@@ -170,10 +200,9 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             }
         )
 
-        # mise à jour des disponibilités physiques
-        furnace_available = end_four                   # four occupé jusqu'à la fin de chauffe
-        cooling_zone_available[chosen_zone] = enter_predeco  # zone libérée seulement quand la pièce en sort
-        predeco_available = start_deco                 # l'emplacement avant déco se libère au démarrage déco
+        furnace_available = end_four
+        cooling_zone_available[chosen_zone] = enter_predeco
+        predeco_available = start_deco
         deco_available = end_deco + config.deco_gap_min
         arm_available[arm] = end_deco
         next_send_time = start_four + config.send_gap_min
@@ -285,7 +314,6 @@ def compute_prm_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dict:
 def get_process_state_at_time(df: pd.DataFrame, current_minute: int) -> dict:
     """
     Vue instantanée du process en respectant bien la capacité 1 par secteur.
-    On utilise :
     - Four : [Début Four, Fin Four)
     - Refroid. : [Début Refroidissement, Fin Occupation Refroidissement)
     - Avant déco : [Début Avant Déco, Fin Avant Déco)
@@ -330,10 +358,7 @@ def get_process_state_at_time(df: pd.DataFrame, current_minute: int) -> dict:
 
 
 def validate_single_capacity_per_sector(df: pd.DataFrame) -> bool:
-    """
-    Vérifie qu'il n'y a jamais > 1 pièce simultanément dans un secteur listé.
-    Utile pour contrôle qualité visuel.
-    """
+    """Vérifie qu'il n'y a jamais > 1 pièce simultanément dans un secteur."""
     if df.empty:
         return True
 
@@ -357,58 +382,3 @@ def validate_single_capacity_per_sector(df: pd.DataFrame) -> bool:
         if counts[sector] > 1:
             return False
     return True
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
-import pandas as pd
-
-
-class ScenarioInfeasibleError(Exception):
-    """Conservée pour compatibilité avec app.py / optimizer.py."""
-    def __init__(self, message: str, details: Optional[dict] = None):
-        super().__init__(message)
-        self.details = details or {}
-
-
-def format_time(minutes: int) -> str:
-    return f"{int(minutes // 60):02d}:{int(minutes % 60):02d}"
-
-
-def to_datetime(minutes: int) -> datetime:
-    return datetime(2024, 1, 1, int(minutes // 60), int(minutes % 60))
-
-
-def normalize_arm_order(first_arm: int) -> List[int]:
-    arms = [1, 2, 3, 4]
-    idx = arms.index(first_arm)
-    return arms[idx:] + arms[:idx]
-
-
-def apply_pause_windows(start_op: int, duration: int, pause_windows: List[Tuple[int, int]]) -> Tuple[int, str]:
-    """
-    Si l'opération démarre pendant une pause ou la chevauche,
-    le démarrage est décalé à la fin de la pause.
-    """
-    reason = ""
-    changed = True
-    
-while changed:
-        changed = False
-        end_temp = start_op + duration
-
-        for p_start, p_end in sorted(pause_windows):
-            # démarre pendant la pause
-            if p_start <= start_op < p_end:
-                start_op = p_end
-                reason = "Pause"
-                changed = True
-                break
-
-            # chevauche la pause
-            if start_op < p_start and end_temp > p_start:
-                start_op = p_end
-                reason = "Pause"
-                changed = True
-                break
-
-    return start_op, reason
-
