@@ -31,7 +31,42 @@ st.set_page_config(page_title="Simulateur P10", layout="wide")
 # =========================================================
 # OUTILS
 # =========================================================
-def minutes_to_hhmm(m: int) -> str:
+def safe_minute_value(value, fallback: int = 0) -> int:
+    """
+    Convertit proprement une valeur en minute entière.
+    Évite les crashs si Streamlit renvoie temporairement une valeur inattendue.
+    """
+    if isinstance(value, (list, tuple)):
+        if len(value) == 0:
+            return int(fallback)
+        value = value[0]
+
+    if value is None:
+        return int(fallback)
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(fallback)
+
+
+def align_minute_to_step(value, start_min: int, end_min: int, step_min: int) -> int:
+    """
+    Ramène la valeur dans l'intervalle [start_min, end_min]
+    et l'aligne sur le pas courant.
+    """
+    v = safe_minute_value(value, fallback=start_min)
+    v = max(start_min, min(end_min, v))
+
+    if step_min > 1:
+        offset = v - start_min
+        v = start_min + (offset // step_min) * step_min
+
+    return v
+
+
+def minutes_to_hhmm(m) -> str:
+    m = safe_minute_value(m, fallback=0)
     return f"{int(m // 60):02d}:{int(m % 60):02d}"
 
 
@@ -71,6 +106,7 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
     st.caption("Affectation produit / bras")
     cols = st.columns(4)
     arms_config = {}
+
     for arm in [1, 2, 3, 4]:
         with cols[arm - 1]:
             default_index = min(arm - 1, len(available_products) - 1) if available_products else 0
@@ -80,6 +116,7 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
                 key=f"{prm_name}_arm_{arm}",
                 index=default_index,
             )
+
     return first_arm, arms_config
 
 
@@ -112,7 +149,7 @@ DEFAULTS = {
     "df_ot_summary": None,
     "last_piece": None,
     "selected_prm": None,
-    "df_mix": None,  # ✅ évite le KeyError
+    "df_mix": None,
     # viewer process
     "process_time_widget": None,
     "process_step_widget": 10,
@@ -313,6 +350,7 @@ with tab1:
             color_discrete_map={
                 "Four": "green",
                 "Refroidissement": "blue",
+                "Avant déco": "orange",
                 "Déco": "purple",
                 "LATENCE": "red",
             },
@@ -322,7 +360,7 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
         # ----------------------
-        # Vue process + lecture automatique
+        # Vue process + lecture automatique corrigée
         # ----------------------
         st.subheader("Vue process dans la journée")
 
@@ -345,7 +383,7 @@ with tab1:
         with c2:
             step_min = st.selectbox(
                 "Pas de temps (min)",
-                [1, 5, 10, 15, 30],
+                [1, 5, 10, 15, 20, 30],
                 key="process_step_widget",
             )
 
@@ -355,14 +393,31 @@ with tab1:
                 key="process_autoplay_widget",
             )
 
+        # réaligner la valeur actuelle au nouveau pas
+        current_value_aligned = align_minute_to_step(
+            st.session_state["process_time_widget"],
+            start_min=start_time,
+            end_min=end_time,
+            step_min=step_min,
+        )
+        st.session_state["process_time_widget"] = current_value_aligned
+
         current_minute = st.slider(
             "Choisir un instant dans la journée",
             min_value=start_time,
             max_value=end_time,
-            value=int(st.session_state["process_time_widget"]),
+            value=current_value_aligned,
             step=step_min,
             key="process_time_widget",
         )
+
+        current_minute = align_minute_to_step(
+            current_minute,
+            start_min=start_time,
+            end_min=end_time,
+            step_min=step_min,
+        )
+        st.session_state["process_time_widget"] = current_minute
 
         st.caption(f"Heure sélectionnée : {minutes_to_hhmm(current_minute)}")
 
@@ -394,6 +449,14 @@ with tab1:
             next_value = current_minute + step_min
             if next_value > end_time:
                 next_value = start_time
+
+            next_value = align_minute_to_step(
+                next_value,
+                start_min=start_time,
+                end_min=end_time,
+                step_min=step_min,
+            )
+
             st.session_state["_next_process_time"] = next_value
             time.sleep(0.6)
             st.rerun()
@@ -402,7 +465,7 @@ with tab1:
             simulation_df=st.session_state["df_view"],
             scenarios_df=st.session_state["df_scenarios"],
             overtime_df=st.session_state["df_ot_summary"],
-            mix_df=st.session_state.get("df_mix"),  # ✅ corrigé
+            mix_df=st.session_state.get("df_mix"),
             cycle_times_df=st.session_state["cycle_times_all"],
         )
         st.download_button(
