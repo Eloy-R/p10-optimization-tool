@@ -1,85 +1,59 @@
 import itertools
-from typing import List, Tuple, Optional
-
 import pandas as pd
 
 from simulation import PRMSimulationConfig, compute_prm_kpis, simulate_prm
 
 
-def _unique_orders(values: List[str]) -> List[Tuple[str, str, str, str]]:
-    return sorted(set(itertools.permutations(values, 4)))
+def generate_all_orders(products):
+    """
+    Génère toutes les combinaisons possibles de 4 bras
+    ex: cuve, cuve, cuve, cloison
+    """
+    return list(itertools.product(products, repeat=4))
 
 
-def _pause_windows_from_duration(
-    pause_start_matin: int,
-    pause_start_aprem: int,
-    duration_min: int,
-):
-    if duration_min <= 0:
-        return []
-    return [
-        (pause_start_matin, pause_start_matin + duration_min),
-        (pause_start_aprem, pause_start_aprem + duration_min),
-    ]
-
-
-def _build_arms_config_from_order(order: Tuple[str, str, str, str]) -> dict:
-    return {1: order[0], 2: order[1], 3: order[2], 4: order[3]}
-
-
-def _score_row(
-    production: int,
-    latence_moy: float,
-    latence_max_obs: float,
-    taux_four: float,
-    pause_duration: int,
-    latence_consigne: int,
-) -> float:
-    score = (
-        production * 1000
-        - latence_moy * 10
-        - max(0.0, latence_max_obs - 20) * 100
-        + taux_four * 0.5
-        - latence_consigne * 1.0
-        - pause_duration * 0.1
-    )
-    return round(score, 3)
+def build_arms_config(order):
+    return {
+        1: order[0],
+        2: order[1],
+        3: order[2],
+        4: order[3],
+    }
 
 
 def evaluate_optimization(
-    prm_name: str,
-    start_time: int,
-    end_time: int,
-    base_config: dict,
-    latence_values: List[int],
-    send_gap_min: int,
-    deco_gap_min: int,
-    pause_start_matin: int,
-    pause_start_aprem: int,
-    pause_durations: List[int],
+    prm_name,
+    start_time,
+    end_time,
+    base_config,
+    latence_values,
+    send_gap_min,
+    deco_gap_min,
+    pause_start_matin,
+    pause_start_aprem,
+    pause_durations,
 ):
-    base_arms_order = [
-        base_config["arms_config"][1],
-        base_config["arms_config"][2],
-        base_config["arms_config"][3],
-        base_config["arms_config"][4],
-    ]
-    unique_orders = _unique_orders(base_arms_order)
+    products = list(base_config["cycle_times"].keys())
 
-    records = []
+    all_orders = generate_all_orders(products)
 
-    for pause_duration in pause_durations:
-        pause_windows = _pause_windows_from_duration(
-            pause_start_matin,
-            pause_start_aprem,
-            pause_duration,
-        )
+    results = []
 
-        for order in unique_orders:
-            arms_config = _build_arms_config_from_order(order)
+    for pause in pause_durations:
+        if pause > 0:
+            pause_windows = [
+                (pause_start_matin, pause_start_matin + pause),
+                (pause_start_aprem, pause_start_aprem + pause),
+            ]
+        else:
+            pause_windows = []
+
+        for order in all_orders:
+            arms_config = build_arms_config(order)
             order_label = " / ".join(order)
 
-            for latence_consigne in latence_values:
+            for lat in latence_values:
+
                 cfg = PRMSimulationConfig(
                     prm_name=prm_name,
                     start_time=start_time,
@@ -88,7 +62,7 @@ def evaluate_optimization(
                     cycle_times=base_config["cycle_times"],
                     first_arm=base_config["first_arm"],
                     send_gap_min=send_gap_min,
-                    latence_max=latence_consigne,
+                    latence_max=lat,
                     deco_gap_min=deco_gap_min,
                     pause_windows=pause_windows,
                 )
@@ -96,100 +70,78 @@ def evaluate_optimization(
                 df = simulate_prm(cfg)
                 kpis = compute_prm_kpis(df, start_time, end_time)
 
-                production = int(kpis["production"])
-                lat_moy = float(kpis["latence_moy"])
-                lat_max_obs = float(kpis["latence_max_obs"])
-                taux_four = float(kpis["taux_four"])
-
-                score = _score_row(
-                    production=production,
-                    latence_moy=lat_moy,
-                    latence_max_obs=lat_max_obs,
-                    taux_four=taux_four,
-                    pause_duration=pause_duration,
-                    latence_consigne=latence_consigne,
-                )
-
-                records.append(
+                results.append(
                     {
-                        "Pause (min)": pause_duration,
-                        "Bras 1": order[0],
-                        "Bras 2": order[1],
-                        "Bras 3": order[2],
-                        "Bras 4": order[3],
+                        "Pause (min)": pause,
                         "Ordre bras": order_label,
-                        "Latence consigne (min)": latence_consigne,
-                        "Production": production,
-                        "Latence moy": round(lat_moy, 3),
-                        "Latence max observée": round(lat_max_obs, 3),
-                        "Taux four (%)": round(taux_four, 3),
-                        "Score": score,
-                        "Statut": "OK" if lat_max_obs <= 20 else "Latence > 20",
+                        "Latence consigne (min)": lat,
+                        "Production": int(kpis["production"]),
+                        "Latence moy": round(float(kpis["latence_moy"]), 2),
+                        "Latence max observée": round(float(kpis["latence_max_obs"]), 2),
+                        "Taux four (%)": round(float(kpis["taux_four"]), 2),
                     }
                 )
 
-    df_scenarios = pd.DataFrame(records)
-    if df_scenarios.empty:
-        return df_scenarios, None
+    df_results = pd.DataFrame(results)
 
-    df_scenarios["_ok"] = (df_scenarios["Latence max observée"] <= 20).astype(int)
-    df_scenarios = df_scenarios.sort_values(
-        by=["_ok", "Production", "Latence moy", "Taux four (%)", "Latence consigne (min)", "Pause (min)"],
-        ascending=[False, False, True, False, True, True],
-    ).drop(columns=["_ok"]).reset_index(drop=True)
+    if df_results.empty:
+        return df_results, None
 
-    best = None
-    ok_df = df_scenarios[df_scenarios["Latence max observée"] <= 20]
-    if not ok_df.empty:
-        best = ok_df.iloc[0].to_dict()
+    # Garder seulement les scénarios valides
+    df_valid = df_results[df_results["Latence max observée"] <= 20]
 
-    return df_scenarios, best
+    if df_valid.empty:
+        best = None
+    else:
+        best = df_valid.sort_values(
+            by=["Production", "Latence moy"],
+            ascending=[False, True],
+        ).iloc[0].to_dict()
+
+    return df_results, best
 
 
-def build_pause_latency_curve(df_scenarios: pd.DataFrame) -> pd.DataFrame:
-    if df_scenarios is None or df_scenarios.empty:
-        return pd.DataFrame()
-
-    work = df_scenarios.copy()
-    work["_ok"] = (work["Latence max observée"] <= 20).astype(int)
-    work = work.sort_values(
-        by=["Pause (min)", "Latence consigne (min)", "_ok", "Production", "Latence moy", "Taux four (%)"],
-        ascending=[True, True, False, False, True, False],
-    )
-    best_curve = work.groupby(["Pause (min)", "Latence consigne (min)"], as_index=False).first()
-    return best_curve.drop(columns=["_ok"])
+def build_pause_latency_curve(df):
+    return pd.DataFrame()
 
 
 def evaluate_overtime_summary_from_best(
-    best_scenario: Optional[dict],
-    prm_name: str,
-    start_time: int,
-    end_time: int,
-    base_config: dict,
-    send_gap_min: int,
-    deco_gap_min: int,
-    pause_start_matin: int,
-    pause_start_aprem: int,
-    overtime_values: List[int],
-) -> pd.DataFrame:
+    best_scenario,
+    prm_name,
+    start_time,
+    end_time,
+    base_config,
+    send_gap_min,
+    deco_gap_min,
+    pause_start_matin,
+    pause_start_aprem,
+    overtime_values,
+):
     if best_scenario is None:
         return pd.DataFrame()
 
-    pause_duration = int(best_scenario["Pause (min)"])
-    pause_windows = _pause_windows_from_duration(
-        pause_start_matin,
-        pause_start_aprem,
-        pause_duration,
-    )
+    pause = best_scenario["Pause (min)"]
+    order = best_scenario["Ordre bras"].split(" / ")
+
     arms_config = {
-        1: best_scenario["Bras 1"],
-        2: best_scenario["Bras 2"],
-        3: best_scenario["Bras 3"],
-        4: best_scenario["Bras 4"],
+        1: order[0],
+        2: order[1],
+        3: order[2],
+        4: order[3],
     }
-    latence_consigne = int(best_scenario["Latence consigne (min)"])
+
+    if pause > 0:
+        pause_windows = [
+            (pause_start_matin, pause_start_matin + pause),
+            (pause_start_aprem, pause_start_aprem + pause),
+        ]
+    else:
+        pause_windows = []
+
+    latence = best_scenario["Latence consigne (min)"]
 
     rows = []
+
     for overtime in overtime_values:
         cfg = PRMSimulationConfig(
             prm_name=prm_name,
@@ -199,19 +151,21 @@ def evaluate_overtime_summary_from_best(
             cycle_times=base_config["cycle_times"],
             first_arm=base_config["first_arm"],
             send_gap_min=send_gap_min,
-            latence_max=latence_consigne,
+            latence_max=latence,
             deco_gap_min=deco_gap_min,
             pause_windows=pause_windows,
         )
+
         df = simulate_prm(cfg)
         kpis = compute_prm_kpis(df, start_time, end_time + overtime)
+
         rows.append(
             {
                 "Overtime (min)": overtime,
                 "Production": int(kpis["production"]),
-                "Latence moy": round(float(kpis["latence_moy"]), 3),
-                "Latence max observée": round(float(kpis["latence_max_obs"]), 3),
-                "Taux four (%)": round(float(kpis["taux_four"]), 3),
+                "Latence moy": round(float(kpis["latence_moy"]), 2),
+                "Latence max observée": round(float(kpis["latence_max_obs"]), 2),
+                "Taux four (%)": round(float(kpis["taux_four"]), 2),
             }
         )
 
