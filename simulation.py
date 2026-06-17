@@ -117,14 +117,14 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             best_plan = None
 
             for zone_name in ["Z1", "Z2"]:
-                # La pièce entre en zone quand la zone est libre.
+                # Entrée en zone quand la zone est libre
                 start_zone = max(end_four, cooling_zone_available[zone_name])
                 cool_finish = start_zone + cool
 
-                # La pièce reste physiquement dans la zone de refroidissement jusqu'à ce
-                # que l'emplacement Avant déco soit libre.
+                # La pièce reste physiquement en zone jusqu'à libération de l'avant-déco
                 enter_predeco = max(cool_finish, predeco_available)
 
+                # Le début de déco dépend ensuite du poste manuel et des pauses
                 raw_start_deco = max(enter_predeco, deco_available)
                 start_deco, pause_reason = apply_pause_windows(raw_start_deco, deco, pause_windows)
                 end_deco = start_deco + deco
@@ -155,7 +155,7 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             if best_plan["latence"] <= config.latence_max:
                 break
 
-            # même logique métier que précédemment : on décale l'entrée au four
+            # même logique métier : on décale l'entrée au four
             start_four += (best_plan["latence"] - config.latence_max)
 
         end_four = start_four + heat
@@ -376,9 +376,11 @@ def validate_single_capacity_per_sector(df: pd.DataFrame) -> bool:
         ])
 
     counts = {"four": 0, "ref_Z1": 0, "ref_Z2": 0, "pre": 0, "deco": 0}
-    # les fins avant les débuts si même minute
+
+    # Les fins avant les débuts si même minute
     for _, sector, delta in sorted(events, key=lambda x: (x[0], x[2])):
         counts[sector] += delta
         if counts[sector] > 1:
             return False
+
     return True
