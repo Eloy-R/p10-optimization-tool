@@ -195,20 +195,20 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         pause_matin_start = st.time_input(
-            "Début pause matin / midi",
+            "Début pause matin",
             value=pd.Timestamp("12:00").to_pydatetime().time(),
         )
         pause_aprem_start = st.time_input(
-            "Début pause après-midi",
+            "Début pause soir",
             value=pd.Timestamp("15:00").to_pydatetime().time(),
         )
     with col2:
         pause_matin_end = st.time_input(
-            "Fin pause matin / midi",
+            "Fin pause matin",
             value=pd.Timestamp("13:00").to_pydatetime().time(),
         )
         pause_aprem_end = st.time_input(
-            "Fin pause après-midi",
+            "Fin pause soir",
             value=pd.Timestamp("16:00").to_pydatetime().time(),
         )
 
