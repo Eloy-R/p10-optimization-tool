@@ -368,13 +368,16 @@ with tab1:
         st.markdown(
             f"""
             <div style="
-                font-size: 20px;
+                font-size: 28px;
                 font-weight: bold;
-                color: #FFFFFF;
+                background-color: #111;
+                color: #00ff88;
                 text-align: left;
+                border-radius: 8px;
                 padding: 10px;
+                margin : 10px 0;
             ">
-                Heure sélectionnée : {minutes_to_hhmm(current_minute)}
+                ⏱ Heure sélectionnée : {minutes_to_hhmm(current_minute)}
             </div>
             """,
             unsafe_allow_html=True
