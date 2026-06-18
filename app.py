@@ -24,7 +24,7 @@ from simulation import (
 )
 from optimizer import (
     evaluate_optimization,
-    build_pause_latency_curve,
+    #build_pause_latency_curve,
     evaluate_overtime_summary_from_best,
 )
 from exports import build_excel_bytes
