@@ -27,6 +27,7 @@ DEFAULT_LATENCE_MAX = 20
 # Paramètres techniques fixes
 FIXED_SEND_GAP = 1
 FIXED_DECO_GAP = 5
+FIXED_FOUR_GAP = 1
 
 DEFAULT_FIRST_ARMS = {
     "PRM4500-1": 1,
