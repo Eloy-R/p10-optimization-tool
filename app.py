@@ -244,7 +244,15 @@ with tab1:
             DEFAULT_FIRST_ARMS[selected_prm],
         )
 
-        if st.button("Lancer la simulation", type="primary"):
+        
+if st.button("Lancer la simulation", type="primary"):
+
+    import inspect
+    import simulation
+
+    st.write("Fichier simulation chargé :", simulation.__file__)
+    st.write("Signature :", inspect.signature(PRMSimulationConfig))
+
             cfg = PRMSimulationConfig(
                 prm_name=selected_prm,
                 start_time=start_time,
