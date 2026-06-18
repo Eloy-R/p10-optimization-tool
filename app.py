@@ -375,7 +375,7 @@ with tab1:
                 text-align: left;
                 border-radius: 8px;
                 padding: 10px;
-                margin : 10px 0;
+                margin : 10px 10px;
             ">
                 ⏱ Heure sélectionnée : {minutes_to_hhmm(current_minute)}
             </div>
