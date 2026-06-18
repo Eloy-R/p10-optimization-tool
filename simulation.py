@@ -1,11 +1,13 @@
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+
 import pandas as pd
 
 
 class ScenarioInfeasibleError(Exception):
-    """Exception levée lorsqu'un scénario ne peut pas respecter les contraintes process."""
+    """Levée lorsqu'un scénario ne peut pas respecter les contraintes process."""
+
     def __init__(self, message: str, details: Optional[dict] = None):
         super().__init__(message)
         self.details = details or {}
@@ -73,6 +75,128 @@ class PRMSimulationConfig:
     extra_first_cycles_count: int = 4
 
 
+def _build_plan_for_start(
+    start_four: int,
+    heat: int,
+    cool: int,
+    deco: int,
+    cooling_zone_available: Dict[str, int],
+    predeco_available: int,
+    deco_available: int,
+    pause_windows: List[Tuple[int, int]],
+) -> Optional[dict]:
+    """
+    Construit le meilleur plan possible pour un départ four donné.
+    On compare Z1 et Z2 et on garde le plan de latence minimale.
+    """
+    end_four = start_four + heat
+    best_plan = None
+
+    for zone_name in ["Z1", "Z2"]:
+        start_zone = max(end_four, cooling_zone_available[zone_name])
+        cool_finish = start_zone + cool
+        enter_predeco = max(cool_finish, predeco_available)
+
+        raw_start_deco = max(enter_predeco, deco_available)
+        start_deco, pause_reason = apply_pause_windows(raw_start_deco, deco, pause_windows)
+        end_deco = start_deco + deco
+        latence = start_deco - cool_finish
+
+        plan = {
+            "zone": zone_name,
+            "start_four": start_four,
+            "end_four": end_four,
+            "start_zone": start_zone,
+            "cool_finish": cool_finish,
+            "enter_predeco": enter_predeco,
+            "start_deco": start_deco,
+            "end_deco": end_deco,
+            "latence": latence,
+            "pause_reason": pause_reason,
+        }
+
+        if best_plan is None:
+            best_plan = plan
+        else:
+            # Logique préventive / qualité :
+            # 1) latence minimale possible
+            # 2) fin de déco la plus tôt possible
+            # 3) départ four le plus tôt possible
+            if (plan["latence"], plan["end_deco"], plan["start_four"]) < (
+                best_plan["latence"],
+                best_plan["end_deco"],
+                best_plan["start_four"],
+            ):
+                best_plan = plan
+
+    return best_plan
+
+
+def _find_best_feasible_plan(
+    earliest_start_four: int,
+    latest_end_time: int,
+    heat: int,
+    cool: int,
+    deco: int,
+    cooling_zone_available: Dict[str, int],
+    predeco_available: int,
+    deco_available: int,
+    pause_windows: List[Tuple[int, int]],
+    latence_max: int,
+) -> Optional[dict]:
+    """
+    Recherche préventivement le meilleur départ four :
+    - latence la plus basse possible
+    - sous la contrainte latence <= latence_max
+    - sans dépasser la fin de journée
+
+    On scanne les départs minute par minute depuis le plus tôt possible.
+    C'est plus robuste et plus fidèle métier qu'un simple 'premier scénario acceptable'.
+    """
+    latest_start_four = latest_end_time - heat
+    if earliest_start_four > latest_start_four:
+        return None
+
+    best_feasible = None
+
+    for start_four in range(earliest_start_four, latest_start_four + 1):
+        plan = _build_plan_for_start(
+            start_four=start_four,
+            heat=heat,
+            cool=cool,
+            deco=deco,
+            cooling_zone_available=cooling_zone_available,
+            predeco_available=predeco_available,
+            deco_available=deco_available,
+            pause_windows=pause_windows,
+        )
+
+        if plan is None:
+            continue
+
+        if plan["end_deco"] > latest_end_time:
+            continue
+
+        if plan["latence"] > latence_max:
+            continue
+
+        if best_feasible is None:
+            best_feasible = plan
+        else:
+            if (plan["latence"], plan["end_deco"], plan["start_four"]) < (
+                best_feasible["latence"],
+                best_feasible["end_deco"],
+                best_feasible["start_four"],
+            ):
+                best_feasible = plan
+
+        # optimisation légère : si on a trouvé une latence nulle, on ne fera pas mieux
+        if best_feasible is not None and best_feasible["latence"] == 0:
+            break
+
+    return best_feasible
+
+
 def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
     """
     Hypothèses de capacité :
@@ -84,10 +208,10 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
 
     Logique préventive sur la latence :
     - la latence maximale est une CONTRAINTE DURE ;
-    - avant d'envoyer une pièce au four, on estime la latence future ;
-    - si la latence projetée dépasse la limite, on retarde l'entrée au four ;
-    - si aucune solution ne permet de respecter la contrainte dans la journée,
-      on arrête la production sans jamais accepter une pièce hors limite.
+    - avant d'envoyer une pièce au four, on cherche le meilleur départ possible ;
+    - la simulation choisit la latence la plus basse possible sous la limite ;
+    - si aucune solution ne respecte la contrainte dans la journée, on arrête la production ;
+    - aucune pièce hors limite n'est jamais acceptée.
     """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
@@ -118,81 +242,37 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         if cycle_idx < config.extra_first_cycles_count:
             heat += config.extra_first_cycles
 
-        start_four = max(next_send_time, arm_available[arm], furnace_available)
+        earliest_start_four = max(next_send_time, arm_available[arm], furnace_available)
 
-        max_iterations = 10000
-        iteration_count = 0
-        solved = False
-        best_plan = None
+        plan = _find_best_feasible_plan(
+            earliest_start_four=earliest_start_four,
+            latest_end_time=config.end_time,
+            heat=heat,
+            cool=cool,
+            deco=deco,
+            cooling_zone_available=cooling_zone_available,
+            predeco_available=predeco_available,
+            deco_available=deco_available,
+            pause_windows=pause_windows,
+            latence_max=config.latence_max,
+        )
 
-        while iteration_count < max_iterations:
-            iteration_count += 1
-            end_four = start_four + heat
-
-            if end_four > config.end_time:
-                break
-
-            best_plan = None
-            for zone_name in ["Z1", "Z2"]:
-                start_zone = max(end_four, cooling_zone_available[zone_name])
-                cool_finish = start_zone + cool
-
-                enter_predeco = max(cool_finish, predeco_available)
-
-                raw_start_deco = max(enter_predeco, deco_available)
-                start_deco, pause_reason = apply_pause_windows(raw_start_deco, deco, pause_windows)
-                end_deco = start_deco + deco
-                latence = start_deco - cool_finish
-
-                plan = {
-                    "zone": zone_name,
-                    "start_zone": start_zone,
-                    "cool_finish": cool_finish,
-                    "enter_predeco": enter_predeco,
-                    "start_deco": start_deco,
-                    "end_deco": end_deco,
-                    "latence": latence,
-                    "pause_reason": pause_reason,
-                }
-
-                if best_plan is None:
-                    best_plan = plan
-                else:
-                    if (plan["start_deco"], plan["latence"], plan["end_deco"]) < (
-                        best_plan["start_deco"],
-                        best_plan["latence"],
-                        best_plan["end_deco"],
-                    ):
-                        best_plan = plan
-
-            if best_plan is None:
-                break
-
-            if best_plan["latence"] <= config.latence_max:
-                solved = True
-                break
-
-            delay_needed = best_plan["latence"] - config.latence_max
-            if delay_needed <= 0:
-                delay_needed = 1
-            start_four += delay_needed
-
-            if start_four + heat > config.end_time:
-                break
-
-        if not solved:
+        # Si aucune solution n'existe sous la limite de latence, on s'arrête.
+        if plan is None:
             break
 
-        end_four = start_four + heat
-        chosen_zone = best_plan["zone"]
-        start_zone = best_plan["start_zone"]
-        cool_finish = best_plan["cool_finish"]
-        enter_predeco = best_plan["enter_predeco"]
-        start_deco = best_plan["start_deco"]
-        end_deco = best_plan["end_deco"]
-        latence = best_plan["latence"]
-        pause_reason = best_plan["pause_reason"]
+        start_four = plan["start_four"]
+        end_four = plan["end_four"]
+        chosen_zone = plan["zone"]
+        start_zone = plan["start_zone"]
+        cool_finish = plan["cool_finish"]
+        enter_predeco = plan["enter_predeco"]
+        start_deco = plan["start_deco"]
+        end_deco = plan["end_deco"]
+        latence = plan["latence"]
+        pause_reason = plan["pause_reason"]
 
+        # Double sécurité : on n'enregistre jamais une pièce invalide.
         if latence > config.latence_max:
             raise ScenarioInfeasibleError(
                 f"Latence observée {latence} > latence max autorisée {config.latence_max}",
