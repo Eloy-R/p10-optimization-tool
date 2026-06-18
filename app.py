@@ -491,14 +491,14 @@ with tab2:
 
             st.session_state["df_scenarios_all"] = df_scenarios_all
             st.session_state["df_scenarios"] = df_top3
-            st.session_state["df_curve"] = df_curve
+            #st.session_state["df_curve"] = df_curve
             st.session_state["best_scenario"] = best
             st.session_state["df_ot_summary"] = df_ot_summary
 
         if st.session_state["df_scenarios"] is not None and not st.session_state["df_scenarios"].empty:
             best = st.session_state["best_scenario"]
             df_top3 = st.session_state["df_scenarios"]
-            df_curve = st.session_state.get("df_curve")
+            #df_curve = st.session_state.get("df_curve")
             df_ot_summary = st.session_state.get("df_ot_summary")
 
             c1, c2, c3, c4 = st.columns(4)
@@ -523,18 +523,18 @@ with tab2:
                 st.subheader("Synthèse overtime du meilleur scénario")
                 st.dataframe(df_ot_summary, use_container_width=True)
 
-            if df_curve is not None and not df_curve.empty:
-                st.subheader("Production en fonction de la latence et des pauses")
-                fig_curve = px.line(
-                    df_curve,
-                    x="Latence consigne (min)",
-                    y="Production",
-                    color="Pause (min)",
-                    markers=True,
-                    hover_data=["Ordre bras", "Latence moy", "Taux four (%)", "Latence max observée"],
-                    title="Production selon la latence et les pauses",
-                )
-                st.plotly_chart(fig_curve, use_container_width=True)
+            # if df_curve is not None and not df_curve.empty:
+            #     st.subheader("Production en fonction de la latence et des pauses")
+            #     fig_curve = px.line(
+            #         df_curve,
+            #         x="Latence consigne (min)",
+            #         y="Production",
+            #         color="Pause (min)",
+            #         markers=True,
+            #         hover_data=["Ordre bras", "Latence moy", "Taux four (%)", "Latence max observée"],
+            #         title="Production selon la latence et les pauses",
+            #     )
+            #     st.plotly_chart(fig_curve, use_container_width=True)
 
         elif st.session_state["df_scenarios"] is not None:
             st.warning("Aucun scénario n'a pu être évalué.")
