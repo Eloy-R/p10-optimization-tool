@@ -371,7 +371,7 @@ with tab1:
                 font-size: 20px;
                 font-weight: bold;
                 color: #1f77b4;
-                text-align: center;
+                text-align: left;
                 padding: 5px;
             ">
                 Heure sélectionnée : {minutes_to_hhmm(current_minute)}
