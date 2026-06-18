@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from config import FIXED_FOUR_GAP
 from simulation import PRMSimulationConfig, compute_prm_kpis, simulate_prm
 
 
@@ -91,15 +92,6 @@ def evaluate_optimization(
     mode_optim: str = "Équilibre",
     latence_limite_process: int = 20,
 ):
-    """
-    Optimisation logique :
-    - on garde exactement le mix choisi dans l'UI ;
-    - on teste les permutations uniques de ce mix ;
-    - on teste les pauses 0 / 30 / 60 ;
-    - on teste toutes les latences autorisées demandées ;
-    - on filtre strictement les scénarios où la latence max observée dépasse la limite process ;
-    - on classe selon un score multi-critères.
-    """
     unique_orders = _unique_orders_from_current_mix(base_config["arms_config"])
     records = []
 
@@ -125,6 +117,7 @@ def evaluate_optimization(
                     send_gap_min=send_gap_min,
                     latence_max=latence_consigne,
                     deco_gap_min=deco_gap_min,
+                    four_gap_min=FIXED_FOUR_GAP,
                     pause_windows=pause_windows,
                 )
 
@@ -151,7 +144,6 @@ def evaluate_optimization(
     if df_scenarios.empty:
         return df_scenarios, None
 
-    # Contrainte dure process
     df_scenarios = df_scenarios[
         df_scenarios["Latence max observée"] <= latence_limite_process
     ].copy()
@@ -178,22 +170,6 @@ def evaluate_optimization(
 
     best = df_scenarios.iloc[0].to_dict()
     return df_scenarios, best
-
-
-def build_pause_latency_curve(df_scenarios: pd.DataFrame) -> pd.DataFrame:
-    """
-    Conservée pour compatibilité si vous réactivez un jour un graphe.
-    Non utilisée dans la version actuelle de l'app.
-    """
-    if df_scenarios is None or df_scenarios.empty:
-        return pd.DataFrame()
-
-    work = df_scenarios.copy()
-    work = work.sort_values(
-        by=["Pause (min)", "Latence consigne (min)", "Score multicritère"],
-        ascending=[True, True, False],
-    )
-    return work.groupby(["Pause (min)", "Latence consigne (min)"], as_index=False).first()
 
 
 def evaluate_overtime_summary_from_best(
@@ -238,6 +214,7 @@ def evaluate_overtime_summary_from_best(
             send_gap_min=send_gap_min,
             latence_max=latence_consigne,
             deco_gap_min=deco_gap_min,
+            four_gap_min=FIXED_FOUR_GAP,
             pause_windows=pause_windows,
         )
 
