@@ -368,7 +368,7 @@ with tab1:
         st.markdown(
             f"""
             <div style="
-                width: 250px;
+                width: 450px;
                 font-size: 28px;
                 font-weight: bold;
                 background-color: #FFFFFF;
