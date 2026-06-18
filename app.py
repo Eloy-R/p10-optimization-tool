@@ -91,18 +91,18 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
 
     st.caption("Affectation produit / bras")
     cols = st.columns(4)
-    arms_config = {}  
-    
+    arms_config = {}
     for arm in [1, 2, 3, 4]:
         with cols[arm - 1]:
             default_index = 0 if arm % 2 == 1 else 1
-
+            if len(available_products) < 2:
+                default_index = 0
             arms_config[arm] = st.selectbox(
                 f"Bras {arm}",
-            available_products,
-            key=f"{prm_name}_arm_{arm}",
-            index=default_index,
-        )
+                available_products,
+                key=f"{prm_name}_arm_{arm}",
+                index=min(default_index, len(available_products) - 1),
+            )
     return first_arm, arms_config
 
 
@@ -159,12 +159,17 @@ with st.sidebar:
     end_time = DEFAULT_END_TIME
     st.caption(f"Début : {minutes_to_hhmm(start_time)} | Fin max : {minutes_to_hhmm(end_time)}")
 
-    latence_max = st.slider("Latence max autorisée (min)", 0, 20, DEFAULT_LATENCE_MAX)
-    st.caption("Aucune pièce ne peut dépasser cette latence maximale entre la fin de refroidissement et le début de décoffrage.")
+    latence_limite_optim = st.slider(
+        "Latence max process pour optimisation (min)",
+        0,
+        20,
+        DEFAULT_LATENCE_MAX,
+    )
+    st.caption("Pour l'optimisation uniquement : aucune proposition ne dépassera cette latence maximale observée.")
 
     send_gap_min = FIXED_SEND_GAP
     deco_gap_min = FIXED_DECO_GAP
-    st.caption("Le rythme d’envoi au four est calculé automatiquement pour respecter la latence.")
+    st.caption("Le rythme d’envoi au four est calculé automatiquement pour la simulation.")
     st.caption(f"Marge mini entre deux décoffrages fixée à {FIXED_DECO_GAP} min.")
     st.caption(f"Marge mini entre deux passages au four fixée à {FIXED_FOUR_GAP} min.")
 
@@ -194,19 +199,15 @@ with st.sidebar:
 
     pause_windows = []
     if pause_matin_active:
-        pause_windows.append(
-            (
-                pause_matin_start.hour * 60 + pause_matin_start.minute,
-                pause_matin_end.hour * 60 + pause_matin_end.minute,
-            )
-        )
+        pause_windows.append((
+            pause_matin_start.hour * 60 + pause_matin_start.minute,
+            pause_matin_end.hour * 60 + pause_matin_end.minute,
+        ))
     if pause_soir_active:
-        pause_windows.append(
-            (
-                pause_soir_start.hour * 60 + pause_soir_start.minute,
-                pause_soir_end.hour * 60 + pause_soir_end.minute,
-            )
-        )
+        pause_windows.append((
+            pause_soir_start.hour * 60 + pause_soir_start.minute,
+            pause_soir_end.hour * 60 + pause_soir_end.minute,
+        ))
 
 
 tab1, tab2, tab3 = st.tabs(["Simulation", "Optimisation", "Table des temps"])
@@ -252,7 +253,8 @@ with tab1:
                 cycle_times=cycle_times_all[selected_prm],
                 first_arm=first_arm,
                 send_gap_min=send_gap_min,
-                latence_max=latence_max,
+                latence_max=20,
+                latence_cible=0,
                 deco_gap_min=deco_gap_min,
                 four_gap_min=FIXED_FOUR_GAP,
                 pause_windows=pause_windows,
@@ -280,7 +282,7 @@ with tab1:
                 st.session_state["df_view"] = None
                 st.session_state["gantt_df"] = None
                 st.session_state["kpis"] = None
-                st.error("Scénario infaisable : la latence maximale ne peut pas être respectée avec les paramètres actuels.")
+                st.error("Scénario infaisable : les contraintes process ne peuvent pas être respectées avec les paramètres actuels.")
                 st.code(str(e), language="text")
 
             except Exception as e:
@@ -364,27 +366,15 @@ with tab1:
         )
 
         current_minute = align_minute_to_step(current_minute, start_min=start_time, end_min=end_time, step_min=step_min)
-        
+
         st.markdown(
             f"""
-            <div style="
-                width: 450px;
-                font-size: 28px;
-                font-weight: bold;
-                background-color: #FFFFFF;
-                color: #FF4B4B;
-                border-left: 6px solid #FF4B4B;
-                text-align: left;
-                border-radius: 8px;
-                padding: 10px;
-                margin : 10px 0;
-            ">
-                ⏱ Heure sélectionnée : {minutes_to_hhmm(current_minute)}
+            <div style='display:inline-block;width:260px;font-size:26px;font-weight:bold;background-color:#f0f4ff;color:#003366;border-left:6px solid #FF4B4B;padding:10px;border-radius:6px;margin-top:10px;'>
+                ⏱ {minutes_to_hhmm(current_minute)}
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
-
 
         process_state = get_process_state_at_time(st.session_state["df_raw"], current_minute)
 
@@ -446,13 +436,13 @@ with tab2:
         )
 
         st.write(
-            "L'optimisation compare : les pauses (0 / 30 / 60 min matin + soir), les permutations du mix actuellement choisi sur les 4 bras, et toutes les latences autorisées entre 5 et 20 min."
+            "L'optimisation compare : les pauses (0 / 30 / 60 min matin + soir), les permutations du mix actuellement choisi sur les 4 bras, et plusieurs latences cibles acceptées."
+        )
+        st.write(
+            f"La limite dure process reste fixée à {latence_limite_optim} min : aucune proposition ne dépassera cette valeur."
         )
         st.write(
             "Le tableau reprend uniquement 3 scénarios : le meilleur pour 0 min, 30 min et 60 min de pause."
-        )
-        st.write(
-            "L'overtime est conservé en synthèse annexe sur le meilleur scénario, mais n'entre pas dans le classement principal."
         )
 
         if st.button("Lancer l'optimisation"):
@@ -472,7 +462,7 @@ with tab2:
 
             pause_start_matin = pause_matin_start.hour * 60 + pause_matin_start.minute
             pause_start_soir = pause_soir_start.hour * 60 + pause_soir_start.minute
-            latence_values = list(range(5, 21))
+            latence_values = [0, 2, 4, 6, 8, 10, 15, 20]
 
             df_scenarios_all, best = evaluate_optimization(
                 prm_name=selected_prm,
@@ -486,7 +476,7 @@ with tab2:
                 pause_start_aprem=pause_start_soir,
                 pause_durations=[0, 30, 60],
                 mode_optim=mode_optim,
-                latence_limite_process=20,
+                latence_limite_process=latence_limite_optim,
             )
 
             df_top3 = pd.DataFrame()
@@ -525,20 +515,20 @@ with tab2:
             c1, c2, c3, c4 = st.columns(4)
             if best is not None:
                 c1.metric("Meilleur scénario – Production", int(best["Production"]))
-                c2.metric("Meilleur scénario – Latence consigne", int(best["Latence consigne (min)"]))
+                c2.metric("Meilleur scénario – Latence cible", int(best["Latence cible acceptée (min)"]))
                 c3.metric("Meilleur scénario – Latence moy", round(best["Latence moy"], 2))
                 c4.metric("Meilleur scénario – Taux four (%)", round(best["Taux four (%)"], 1))
 
             if best is not None:
                 st.success(
-                    f"Meilleur scénario : pause {best['Pause (min)']} min matin + soir | ordre {best['Ordre bras']} | latence consigne {best['Latence consigne (min)']} min | production {best['Production']} | latence moy {best['Latence moy']:.2f} | latence max obs {best['Latence max observée']:.2f} | taux four {best['Taux four (%)']:.1f}%"
+                    f"Meilleur scénario : pause {best['Pause (min)']} min matin + soir | ordre {best['Ordre bras']} | latence cible acceptée {best['Latence cible acceptée (min)']} min | production {best['Production']} | latence moy {best['Latence moy']:.2f} | latence max obs {best['Latence max observée']:.2f} | taux four {best['Taux four (%)']:.1f}%"
                 )
 
             st.subheader("Les 3 meilleurs scénarios (1 par niveau de pause)")
             columns_to_show = [
                 "Pause (min)",
                 "Ordre bras",
-                "Latence consigne (min)",
+                "Latence cible acceptée (min)",
                 "Production",
                 "Latence moy",
                 "Latence max observée",
