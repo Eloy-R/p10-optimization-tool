@@ -475,7 +475,7 @@ with tab2:
                     .reset_index(drop=True)
                 )
 
-            df_curve = build_pause_latency_curve(df_scenarios_all)
+            #df_curve = build_pause_latency_curve(df_scenarios_all)
             df_ot_summary = evaluate_overtime_summary_from_best(
                 best_scenario=best,
                 prm_name=selected_prm,
