@@ -370,7 +370,7 @@ with tab1:
             <div style="
                 font-size: 20px;
                 font-weight: bold;
-                color: #1f77b4;
+                color: #000000;
                 text-align: left;
                 padding: 5px;
             ">
