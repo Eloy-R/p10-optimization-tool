@@ -372,8 +372,8 @@ with tab1:
                 font-size: 28px;
                 font-weight: bold;
                 background-color: #FFFFFF;
-                color: #BA2100;
-                border-left: 6px solid #BA2100;
+                color: #FF4B4B;
+                border-left: 6px solid #FF4B4B;
                 text-align: left;
                 border-radius: 8px;
                 padding: 10px;
