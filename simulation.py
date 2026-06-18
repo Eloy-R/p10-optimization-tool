@@ -32,10 +32,6 @@ def apply_pause_windows(
     duration: int,
     pause_windows: List[Tuple[int, int]],
 ) -> Tuple[int, str]:
-    """
-    Si l'opération démarre pendant une pause ou la chevauche,
-    le démarrage est décalé à la fin de la pause.
-    """
     reason = ""
     changed = True
 
@@ -70,6 +66,7 @@ class PRMSimulationConfig:
     send_gap_min: int = 1
     latence_max: int = 20
     deco_gap_min: int = 5
+    four_gap_min: int = 1
     pause_windows: Optional[List[Tuple[int, int]]] = None
     extra_first_cycles: int = 2
     extra_first_cycles_count: int = 4
@@ -85,10 +82,6 @@ def _build_plan_for_start(
     deco_available: int,
     pause_windows: List[Tuple[int, int]],
 ) -> Optional[dict]:
-    """
-    Construit le meilleur plan possible pour un départ four donné.
-    On compare Z1 et Z2 et on garde le plan de latence minimale.
-    """
     end_four = start_four + heat
     best_plan = None
 
@@ -118,10 +111,6 @@ def _build_plan_for_start(
         if best_plan is None:
             best_plan = plan
         else:
-            # Logique préventive / qualité :
-            # 1) latence minimale possible
-            # 2) fin de déco la plus tôt possible
-            # 3) départ four le plus tôt possible
             if (plan["latence"], plan["end_deco"], plan["start_four"]) < (
                 best_plan["latence"],
                 best_plan["end_deco"],
@@ -144,15 +133,6 @@ def _find_best_feasible_plan(
     pause_windows: List[Tuple[int, int]],
     latence_max: int,
 ) -> Optional[dict]:
-    """
-    Recherche préventivement le meilleur départ four :
-    - latence la plus basse possible
-    - sous la contrainte latence <= latence_max
-    - sans dépasser la fin de journée
-
-    On scanne les départs minute par minute depuis le plus tôt possible.
-    C'est plus robuste et plus fidèle métier qu'un simple 'premier scénario acceptable'.
-    """
     latest_start_four = latest_end_time - heat
     if earliest_start_four > latest_start_four:
         return None
@@ -173,10 +153,8 @@ def _find_best_feasible_plan(
 
         if plan is None:
             continue
-
         if plan["end_deco"] > latest_end_time:
             continue
-
         if plan["latence"] > latence_max:
             continue
 
@@ -190,7 +168,6 @@ def _find_best_feasible_plan(
             ):
                 best_feasible = plan
 
-        # optimisation légère : si on a trouvé une latence nulle, on ne fera pas mieux
         if best_feasible is not None and best_feasible["latence"] == 0:
             break
 
@@ -198,21 +175,6 @@ def _find_best_feasible_plan(
 
 
 def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
-    """
-    Hypothèses de capacité :
-    - Four : capacité 1
-    - Refroid. Z1 : capacité 1
-    - Refroid. Z2 : capacité 1
-    - Avant déco : capacité 1
-    - Déco : capacité 1
-
-    Logique préventive sur la latence :
-    - la latence maximale est une CONTRAINTE DURE ;
-    - avant d'envoyer une pièce au four, on cherche le meilleur départ possible ;
-    - la simulation choisit la latence la plus basse possible sous la limite ;
-    - si aucune solution ne respecte la contrainte dans la journée, on arrête la production ;
-    - aucune pièce hors limite n'est jamais acceptée.
-    """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
 
@@ -257,7 +219,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             latence_max=config.latence_max,
         )
 
-        # Si aucune solution n'existe sous la limite de latence, on s'arrête.
         if plan is None:
             break
 
@@ -272,7 +233,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         latence = plan["latence"]
         pause_reason = plan["pause_reason"]
 
-        # Double sécurité : on n'enregistre jamais une pièce invalide.
         if latence > config.latence_max:
             raise ScenarioInfeasibleError(
                 f"Latence observée {latence} > latence max autorisée {config.latence_max}",
@@ -317,7 +277,7 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             }
         )
 
-        furnace_available = end_four
+        furnace_available = end_four + config.four_gap_min
         cooling_zone_available[chosen_zone] = enter_predeco
         predeco_available = start_deco
         deco_available = end_deco + config.deco_gap_min
