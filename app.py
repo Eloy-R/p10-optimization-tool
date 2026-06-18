@@ -11,6 +11,7 @@ from config import (
     DEFAULT_START_TIMES,
     FIXED_DECO_GAP,
     FIXED_SEND_GAP,
+    FIXED_FOUR_GAP,
     PRM_LABELS,
 )
 from simulation import (
@@ -22,11 +23,7 @@ from simulation import (
     get_process_state_at_time,
     simulate_prm,
 )
-from optimizer import (
-    evaluate_optimization,
-    #build_pause_latency_curve,
-    evaluate_overtime_summary_from_best,
-)
+from optimizer import evaluate_optimization, evaluate_overtime_summary_from_best
 from exports import build_excel_bytes
 
 st.set_page_config(page_title="Simulateur P10", layout="wide")
@@ -129,7 +126,6 @@ DEFAULTS = {
     "kpis": None,
     "df_scenarios": None,
     "df_scenarios_all": None,
-    "df_curve": None,
     "best_scenario": None,
     "selected_prm": None,
     "df_mix": None,
@@ -161,12 +157,14 @@ with st.sidebar:
     end_time = DEFAULT_END_TIME
     st.caption(f"Début : {minutes_to_hhmm(start_time)} | Fin max : {minutes_to_hhmm(end_time)}")
 
-    latence_max = st.slider("Latence max (min)", 0, 20, DEFAULT_LATENCE_MAX)
+    latence_max = st.slider("Latence max autorisée (min)", 0, 20, DEFAULT_LATENCE_MAX)
+    st.caption("Aucune pièce ne peut dépasser cette latence maximale entre la fin de refroidissement et le début de décoffrage.")
 
     send_gap_min = FIXED_SEND_GAP
     deco_gap_min = FIXED_DECO_GAP
     st.caption("Le rythme d’envoi au four est calculé automatiquement pour respecter la latence.")
     st.caption(f"Marge mini entre deux décoffrages fixée à {FIXED_DECO_GAP} min.")
+    st.caption(f"Marge mini entre deux passages au four fixée à {FIXED_FOUR_GAP} min.")
 
     st.subheader("Pauses")
     pause_matin_active = st.checkbox("Pause matin", True)
@@ -254,6 +252,7 @@ with tab1:
                 send_gap_min=send_gap_min,
                 latence_max=latence_max,
                 deco_gap_min=deco_gap_min,
+                four_gap_min=FIXED_FOUR_GAP,
                 pause_windows=pause_windows,
             )
 
@@ -268,6 +267,7 @@ with tab1:
                 st.session_state["gantt_df"] = gantt_df
                 st.session_state["kpis"] = kpis
                 st.session_state["selected_prm"] = selected_prm
+
                 st.session_state["process_time_slider"] = start_time
                 st.session_state["process_step_widget"] = 10
                 st.session_state["process_autoplay_widget"] = False
@@ -416,9 +416,15 @@ with tab2:
     if not available_products:
         st.info("Définissez d'abord les temps de cycle pour cette PRM.")
     else:
+        mode_optim = st.selectbox(
+            "Mode d'optimisation",
+            ["Production max", "Équilibre", "Latence faible"],
+            index=1,
+            help="Production max = priorité au volume ; Équilibre = compromis production / latence / taux four ; Latence faible = priorité à la qualité process.",
+        )
+
         st.write(
-            "L'optimisation compare : les pauses (0 / 30 / 60 min matin + soir), "
-            "les permutations des 4 bras et les valeurs de latence jusqu'à 20 min."
+            "L'optimisation compare : les pauses (0 / 30 / 60 min matin + soir), les permutations du mix actuellement choisi sur les 4 bras, et toutes les latences autorisées entre 5 et 20 min."
         )
         st.write(
             "Le tableau reprend uniquement 3 scénarios : le meilleur pour 0 min, 30 min et 60 min de pause."
@@ -444,10 +450,7 @@ with tab2:
 
             pause_start_matin = pause_matin_start.hour * 60 + pause_matin_start.minute
             pause_start_soir = pause_soir_start.hour * 60 + pause_soir_start.minute
-
-            latence_values = list(range(max(5, latence_max), 21))
-            if latence_max <= 20 and latence_max not in latence_values:
-                latence_values = sorted(set(latence_values + [latence_max]))
+            latence_values = list(range(5, 21))
 
             df_scenarios_all, best = evaluate_optimization(
                 prm_name=selected_prm,
@@ -460,22 +463,20 @@ with tab2:
                 pause_start_matin=pause_start_matin,
                 pause_start_aprem=pause_start_soir,
                 pause_durations=[0, 30, 60],
+                mode_optim=mode_optim,
+                latence_limite_process=20,
             )
 
             df_top3 = pd.DataFrame()
             if df_scenarios_all is not None and not df_scenarios_all.empty:
                 df_top3 = (
-                    df_scenarios_all.sort_values(
-                        by=["Pause (min)", "Production", "Latence moy", "Taux four (%)", "Latence consigne (min)"],
-                        ascending=[True, False, True, False, True],
-                    )
+                    df_scenarios_all.sort_values(by=["Rang pause", "Pause (min)"], ascending=[True, True])
                     .groupby("Pause (min)", as_index=False)
                     .first()
                     .sort_values("Pause (min)")
                     .reset_index(drop=True)
                 )
 
-            #df_curve = build_pause_latency_curve(df_scenarios_all)
             df_ot_summary = evaluate_overtime_summary_from_best(
                 best_scenario=best,
                 prm_name=selected_prm,
@@ -491,14 +492,12 @@ with tab2:
 
             st.session_state["df_scenarios_all"] = df_scenarios_all
             st.session_state["df_scenarios"] = df_top3
-            #st.session_state["df_curve"] = df_curve
             st.session_state["best_scenario"] = best
             st.session_state["df_ot_summary"] = df_ot_summary
 
         if st.session_state["df_scenarios"] is not None and not st.session_state["df_scenarios"].empty:
             best = st.session_state["best_scenario"]
             df_top3 = st.session_state["df_scenarios"]
-            #df_curve = st.session_state.get("df_curve")
             df_ot_summary = st.session_state.get("df_ot_summary")
 
             c1, c2, c3, c4 = st.columns(4)
@@ -510,31 +509,26 @@ with tab2:
 
             if best is not None:
                 st.success(
-                    f"Meilleur scénario : pause {best['Pause (min)']} min matin + soir | "
-                    f"ordre {best['Ordre bras']} | latence consigne {best['Latence consigne (min)']} min | "
-                    f"production {best['Production']} | latence moy {best['Latence moy']:.2f} | "
-                    f"latence max obs {best['Latence max observée']:.2f} | taux four {best['Taux four (%)']:.1f}%"
+                    f"Meilleur scénario : pause {best['Pause (min)']} min matin + soir | ordre {best['Ordre bras']} | latence consigne {best['Latence consigne (min)']} min | production {best['Production']} | latence moy {best['Latence moy']:.2f} | latence max obs {best['Latence max observée']:.2f} | taux four {best['Taux four (%)']:.1f}%"
                 )
 
             st.subheader("Les 3 meilleurs scénarios (1 par niveau de pause)")
-            st.dataframe(df_top3, use_container_width=True)
+            columns_to_show = [
+                "Pause (min)",
+                "Ordre bras",
+                "Latence consigne (min)",
+                "Production",
+                "Latence moy",
+                "Latence max observée",
+                "Taux four (%)",
+                "Mode optimisation",
+            ]
+            cols_exist = [c for c in columns_to_show if c in df_top3.columns]
+            st.dataframe(df_top3[cols_exist], use_container_width=True)
 
             if df_ot_summary is not None and not df_ot_summary.empty:
                 st.subheader("Synthèse overtime du meilleur scénario")
                 st.dataframe(df_ot_summary, use_container_width=True)
-
-            # if df_curve is not None and not df_curve.empty:
-            #     st.subheader("Production en fonction de la latence et des pauses")
-            #     fig_curve = px.line(
-            #         df_curve,
-            #         x="Latence consigne (min)",
-            #         y="Production",
-            #         color="Pause (min)",
-            #         markers=True,
-            #         hover_data=["Ordre bras", "Latence moy", "Taux four (%)", "Latence max observée"],
-            #         title="Production selon la latence et les pauses",
-            #     )
-            #     st.plotly_chart(fig_curve, use_container_width=True)
 
         elif st.session_state["df_scenarios"] is not None:
             st.warning("Aucun scénario n'a pu être évalué.")
