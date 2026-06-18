@@ -523,18 +523,18 @@ with tab2:
                 st.subheader("Synthèse overtime du meilleur scénario")
                 st.dataframe(df_ot_summary, use_container_width=True)
 
-            # if df_curve is not None and not df_curve.empty:
-            #     st.subheader("Production en fonction de la latence et des pauses")
-            #     fig_curve = px.line(
-            #         df_curve,
-            #         x="Latence consigne (min)",
-            #         y="Production",
-            #         color="Pause (min)",
-            #         markers=True,
-            #         hover_data=["Ordre bras", "Latence moy", "Taux four (%)", "Latence max observée"],
-            #         title="Production selon la latence et les pauses",
-            #     )
-            #     st.plotly_chart(fig_curve, use_container_width=True)
+            if df_curve is not None and not df_curve.empty:
+                st.subheader("Production en fonction de la latence et des pauses")
+                fig_curve = px.line(
+                    df_curve,
+                    x="Latence consigne (min)",
+                    y="Production",
+                    color="Pause (min)",
+                    markers=True,
+                    hover_data=["Ordre bras", "Latence moy", "Taux four (%)", "Latence max observée"],
+                    title="Production selon la latence et les pauses",
+                )
+                st.plotly_chart(fig_curve, use_container_width=True)
 
         elif st.session_state["df_scenarios"] is not None:
             st.warning("Aucun scénario n'a pu être évalué.")
