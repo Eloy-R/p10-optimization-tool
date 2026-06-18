@@ -364,7 +364,22 @@ with tab1:
         )
 
         current_minute = align_minute_to_step(current_minute, start_min=start_time, end_min=end_time, step_min=step_min)
-        st.caption(f"Heure sélectionnée : {minutes_to_hhmm(current_minute)}")
+        
+        st.markdown(
+            f"""
+            <div style="
+                font-size: 20px;
+                font-weight: bold;
+                color: #1f77b4;
+                text-align: center;
+                padding: 5px;
+            ">
+                Heure sélectionnée : {minutes_to_hhmm(current_minute)}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
 
         process_state = get_process_state_at_time(st.session_state["df_raw"], current_minute)
 
