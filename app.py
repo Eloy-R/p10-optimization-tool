@@ -372,10 +372,11 @@ with tab1:
                 font-weight: bold;
                 background-color: #FFFFFF;
                 color: #00ff88;
+                border-left: 6px solid #1f77b4;
                 text-align: left;
                 border-radius: 8px;
                 padding: 10px;
-                margin : 10px 10px;
+                margin : 10px 0;
             ">
                 ⏱ Heure sélectionnée : {minutes_to_hhmm(current_minute)}
             </div>
