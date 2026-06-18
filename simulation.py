@@ -5,7 +5,7 @@ import pandas as pd
 
 
 class ScenarioInfeasibleError(Exception):
-    """Conservée pour compatibilité avec app.py / optimizer.py."""
+    """Exception levée lorsqu'un scénario ne peut pas respecter les contraintes process."""
     def __init__(self, message: str, details: Optional[dict] = None):
         super().__init__(message)
         self.details = details or {}
@@ -36,20 +36,24 @@ def apply_pause_windows(
     """
     reason = ""
     changed = True
+
     while changed:
         changed = False
         end_temp = start_op + duration
+
         for p_start, p_end in sorted(pause_windows):
             if p_start <= start_op < p_end:
                 start_op = p_end
                 reason = "Pause"
                 changed = True
                 break
+
             if start_op < p_start and end_temp > p_start:
                 start_op = p_end
                 reason = "Pause"
                 changed = True
                 break
+
     return start_op, reason
 
 
@@ -71,15 +75,19 @@ class PRMSimulationConfig:
 
 def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
     """
-    Hypothèses de capacité (1 bras max par secteur) :
-    - Four : 1 capacité
-    - Refroid. Z1 : 1 capacité
-    - Refroid. Z2 : 1 capacité
-    - Avant déco : 1 capacité
-    - Déco : 1 capacité
+    Hypothèses de capacité :
+    - Four : capacité 1
+    - Refroid. Z1 : capacité 1
+    - Refroid. Z2 : capacité 1
+    - Avant déco : capacité 1
+    - Déco : capacité 1
 
-    La latence reste pilotée comme avant :
-    si la latence projetée dépasse la consigne, on retarde l'entrée au four.
+    Logique préventive sur la latence :
+    - la latence maximale est une CONTRAINTE DURE ;
+    - avant d'envoyer une pièce au four, on estime la latence future ;
+    - si la latence projetée dépasse la limite, on retarde l'entrée au four ;
+    - si aucune solution ne permet de respecter la contrainte dans la journée,
+      on arrête la production sans jamais accepter une pièce hors limite.
     """
     pause_windows = sorted(config.pause_windows or [])
     arm_order = normalize_arm_order(config.first_arm)
@@ -112,19 +120,25 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
 
         start_four = max(next_send_time, arm_available[arm], furnace_available)
 
-        while True:
-            end_four = start_four + heat
-            best_plan = None
+        max_iterations = 10000
+        iteration_count = 0
+        solved = False
+        best_plan = None
 
+        while iteration_count < max_iterations:
+            iteration_count += 1
+            end_four = start_four + heat
+
+            if end_four > config.end_time:
+                break
+
+            best_plan = None
             for zone_name in ["Z1", "Z2"]:
-                # Entrée en zone quand la zone est libre
                 start_zone = max(end_four, cooling_zone_available[zone_name])
                 cool_finish = start_zone + cool
 
-                # La pièce reste physiquement en zone jusqu'à libération de l'avant-déco
                 enter_predeco = max(cool_finish, predeco_available)
 
-                # Le début de déco dépend ensuite du poste manuel et des pauses
                 raw_start_deco = max(enter_predeco, deco_available)
                 start_deco, pause_reason = apply_pause_windows(raw_start_deco, deco, pause_windows)
                 end_deco = start_deco + deco
@@ -144,7 +158,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
                 if best_plan is None:
                     best_plan = plan
                 else:
-                    # priorité au début de déco le plus tôt, puis à la latence la plus faible
                     if (plan["start_deco"], plan["latence"], plan["end_deco"]) < (
                         best_plan["start_deco"],
                         best_plan["latence"],
@@ -152,11 +165,23 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
                     ):
                         best_plan = plan
 
-            if best_plan["latence"] <= config.latence_max:
+            if best_plan is None:
                 break
 
-            # même logique métier : on décale l'entrée au four
-            start_four += (best_plan["latence"] - config.latence_max)
+            if best_plan["latence"] <= config.latence_max:
+                solved = True
+                break
+
+            delay_needed = best_plan["latence"] - config.latence_max
+            if delay_needed <= 0:
+                delay_needed = 1
+            start_four += delay_needed
+
+            if start_four + heat > config.end_time:
+                break
+
+        if not solved:
+            break
 
         end_four = start_four + heat
         chosen_zone = best_plan["zone"]
@@ -167,6 +192,18 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         end_deco = best_plan["end_deco"]
         latence = best_plan["latence"]
         pause_reason = best_plan["pause_reason"]
+
+        if latence > config.latence_max:
+            raise ScenarioInfeasibleError(
+                f"Latence observée {latence} > latence max autorisée {config.latence_max}",
+                details={
+                    "produit": product,
+                    "bras": arm,
+                    "cycle": cycle_idx + 1,
+                    "latence_obs": latence,
+                    "latence_max": config.latence_max,
+                },
+            )
 
         if end_deco > config.end_time:
             break
@@ -312,13 +349,6 @@ def compute_prm_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dict:
 
 
 def get_process_state_at_time(df: pd.DataFrame, current_minute: int) -> dict:
-    """
-    Vue instantanée du process en respectant bien la capacité 1 par secteur.
-    - Four : [Début Four, Fin Four)
-    - Refroid. : [Début Refroidissement, Fin Occupation Refroidissement)
-    - Avant déco : [Début Avant Déco, Fin Avant Déco)
-    - Déco : [Début Déco, Fin Déco)
-    """
     state = {
         "Four": [],
         "Refroid. Z1": [],
@@ -358,7 +388,6 @@ def get_process_state_at_time(df: pd.DataFrame, current_minute: int) -> dict:
 
 
 def validate_single_capacity_per_sector(df: pd.DataFrame) -> bool:
-    """Vérifie qu'il n'y a jamais > 1 pièce simultanément dans un secteur."""
     if df.empty:
         return True
 
@@ -376,11 +405,8 @@ def validate_single_capacity_per_sector(df: pd.DataFrame) -> bool:
         ])
 
     counts = {"four": 0, "ref_Z1": 0, "ref_Z2": 0, "pre": 0, "deco": 0}
-
-    # Les fins avant les débuts si même minute
     for _, sector, delta in sorted(events, key=lambda x: (x[0], x[2])):
         counts[sector] += delta
         if counts[sector] > 1:
             return False
-
     return True
