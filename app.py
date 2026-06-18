@@ -91,13 +91,14 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
 
     st.caption("Affectation produit / bras")
     cols = st.columns(4)
-    arms_config = {}      
+    arms_config = {}  
+    
     for arm in [1, 2, 3, 4]:
         with cols[arm - 1]:
-        default_index = 0 if arm % 2 == 1 else 1
+            default_index = 0 if arm % 2 == 1 else 1
 
-        arms_config[arm] = st.selectbox(
-            f"Bras {arm}",
+            arms_config[arm] = st.selectbox(
+                f"Bras {arm}",
             available_products,
             key=f"{prm_name}_arm_{arm}",
             index=default_index,
