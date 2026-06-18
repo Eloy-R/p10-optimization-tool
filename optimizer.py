@@ -155,25 +155,23 @@ def evaluate_optimization(
     if df_scenarios.empty:
         return df_scenarios, None
 
-    df_scenarios["_ok"] = (df_scenarios["Latence max observée"] <= 20).astype(int)
-    df_scenarios = df_scenarios.sort_values(
-        by=[
-            "_ok",
-            "Production",
-            "Latence moy",
-            "Taux four (%)",
-            "Latence consigne (min)",
-            "Pause (min)",
-        ],
-        ascending=[False, False, True, False, True, True],
-    ).drop(columns=["_ok"]).reset_index(drop=True)
+        # ✅ On garde uniquement les scénarios valides
+df_scenarios = df_scenarios[df_scenarios["Latence max observée"] <= 20]
 
-    best = None
-    ok_df = df_scenarios[df_scenarios["Latence max observée"] <= 20]
-    if not ok_df.empty:
-        best = ok_df.iloc[0].to_dict()
+if df_scenarios.empty:
+    return df_scenarios, None
 
-    return df_scenarios, best
+# ✅ Tri logique métier
+df_scenarios = df_scenarios.sort_values(
+    by=["Production", "Latence moy"],
+    ascending=[False, True],
+).reset_index(drop=True)
+
+# ✅ Meilleur scénario
+best = df_scenarios.iloc[0].to_dict()
+
+return df_scenarios, best
+
 
 
 def build_pause_latency_curve(df_scenarios: pd.DataFrame) -> pd.DataFrame:
