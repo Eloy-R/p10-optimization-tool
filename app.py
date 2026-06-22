@@ -279,33 +279,33 @@ with tab1:
             available_products,
             DEFAULT_FIRST_ARMS[selected_prm],
         )
-
     if st.button("Lancer la simulation", type="primary"):
-       cfg_kwargs = {
-                "prm_name": selected_prm,
-                "start_time": start_time,
-                "end_time": end_time,
-                "arms_config": arms_config,
-                "cycle_times": cycle_times_all[selected_prm],
-                "first_arm": first_arm,
-                "send_gap_min": send_gap_min,
-                "latence_max": 20,
-                "latence_cible": 0,
-                "deco_gap_min": deco_gap_min,
-                "four_gap_min": FOUR_GAP_MIN,
-                "pause_windows": pause_windows,
-            }
-        
-        st.write("DEBUG cfg_kwargs :", cfg_kwargs)
-        st.write("DEBUG types :", {k: str(type(v)) for k, v in cfg_kwargs.items()})
-     
-        try:
-            cfg = PRMSimulationConfig(**cfg_kwargs)
-            st.success("cfg créé correctement")
-        except Exception as e:
-            st.error("Erreur exacte à la création de cfg")
-            st.code(repr(e), language="text")
-            st.stop()
+    cfg_kwargs = {
+        "prm_name": selected_prm,
+        "start_time": start_time,
+        "end_time": end_time,
+        "arms_config": arms_config,
+        "cycle_times": cycle_times_all[selected_prm],
+        "first_arm": first_arm,
+        "send_gap_min": send_gap_min,
+        "latence_max": 20,
+        "latence_cible": 0,
+        "deco_gap_min": deco_gap_min,
+        "four_gap_min": FOUR_GAP_MIN,
+        "pause_windows": pause_windows,
+    }
+
+    st.write("DEBUG cfg_kwargs :", cfg_kwargs)
+    st.write("DEBUG types :", {k: str(type(v)) for k, v in cfg_kwargs.items()})
+
+    try:
+        cfg = PRMSimulationConfig(**cfg_kwargs)
+        st.success("cfg créé correctement")
+    except Exception as e:
+        st.error("Erreur exacte à la création de cfg")
+        st.code(repr(e), language="text")
+        st.stop()
+   
 
             try:
                 df_raw = simulate_prm(cfg)
