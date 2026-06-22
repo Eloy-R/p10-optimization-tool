@@ -6,8 +6,6 @@ import pandas as pd
 
 
 class ScenarioInfeasibleError(Exception):
-    """Levée lorsqu'un scénario ne peut pas respecter les contraintes process."""
-
     def __init__(self, message: str, details: Optional[dict] = None):
         super().__init__(message)
         self.details = details or {}
@@ -77,18 +75,7 @@ def _build_plan_for_start(start_four: int, heat: int, cool: int, deco: int, cool
         start_deco, pause_reason = apply_pause_windows(raw_start_deco, deco, pause_windows)
         end_deco = start_deco + deco
         latence = start_deco - cool_finish
-        candidate = {
-            "zone": zone_name,
-            "start_four": start_four,
-            "end_four": end_four,
-            "start_zone": start_zone,
-            "cool_finish": cool_finish,
-            "enter_predeco": enter_predeco,
-            "start_deco": start_deco,
-            "end_deco": end_deco,
-            "latence": latence,
-            "pause_reason": pause_reason,
-        }
+        candidate = {"zone": zone_name, "start_four": start_four, "end_four": end_four, "start_zone": start_zone, "cool_finish": cool_finish, "enter_predeco": enter_predeco, "start_deco": start_deco, "end_deco": end_deco, "latence": latence, "pause_reason": pause_reason}
         if best_plan is None or (candidate["latence"], candidate["end_deco"], candidate["start_four"]) < (best_plan["latence"], best_plan["end_deco"], best_plan["start_four"]):
             best_plan = candidate
     return best_plan
@@ -98,46 +85,26 @@ def _plan_objective(plan: dict, earliest_start_four: int, latence_cible: int, we
     target_over = max(0, plan["latence"] - latence_cible)
     lead_delay = max(0, plan["start_four"] - earliest_start_four)
     cycle_span = max(0, plan["end_deco"] - earliest_start_four)
-    return (
-        weights.get("target_penalty", 2.0) * target_over
-        + weights.get("latency", 1.0) * plan["latence"]
-        + weights.get("start_delay", 1.0) * lead_delay
-        + weights.get("cycle_span", 0.2) * cycle_span
-    )
+    return weights.get("target_penalty", 2.0) * target_over + weights.get("latency", 1.0) * plan["latence"] + weights.get("start_delay", 1.0) * lead_delay + weights.get("cycle_span", 0.2) * cycle_span
 
 
 def _find_best_feasible_plan(earliest_start_four: int, latest_end_time: int, heat: int, cool: int, deco: int, cooling_zone_available: Dict[str, int], predeco_available: int, deco_available: int, pause_windows: List[Tuple[int, int]], latence_max: int, latence_cible: int, arbitration_weights: Optional[Dict[str, float]]) -> Optional[dict]:
     latest_start_four = latest_end_time - heat
     if earliest_start_four > latest_start_four:
         return None
-
-    weights = arbitration_weights or {
-        "target_penalty": 2.0,
-        "latency": 1.0,
-        "start_delay": 1.0,
-        "cycle_span": 0.2,
-    }
-
+    weights = arbitration_weights or {"target_penalty": 2.0, "latency": 1.0, "start_delay": 1.0, "cycle_span": 0.2}
     best_plan = None
     best_score = None
-
     for start_four in range(earliest_start_four, latest_start_four + 1):
         plan = _build_plan_for_start(start_four, heat, cool, deco, cooling_zone_available, predeco_available, deco_available, pause_windows)
-        if plan is None:
+        if plan is None or plan["end_deco"] > latest_end_time or plan["latence"] > latence_max:
             continue
-        if plan["end_deco"] > latest_end_time:
-            continue
-        if plan["latence"] > latence_max:
-            continue
-
         score = _plan_objective(plan, earliest_start_four, latence_cible, weights)
         tie_break = (plan["start_four"], plan["latence"], plan["end_deco"])
         candidate = (score, tie_break)
-
         if best_score is None or candidate < best_score:
             best_score = candidate
             best_plan = plan
-
     return best_plan
 
 
@@ -152,49 +119,21 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
     deco_available = config.start_time
     results = []
     cycle_idx = 0
-
     while True:
         arm = arm_order[cycle_idx % len(arm_order)]
         product = config.arms_config[arm]
-
         if product not in config.cycle_times:
             raise ValueError(f"Produit '{product}' introuvable pour {config.prm_name}")
-
-        try:
-            times = config.cycle_times[product]
-            heat = int(times["heat"])
-            cool = int(times["cool"])
-            deco = int(times["deco"])
-        except Exception as e:
-            raise ValueError(f"Erreur dans les temps du produit {product} : {config.cycle_times.get(product)}") from e
-
+        times = config.cycle_times[product]
+        heat = int(times["heat"])
+        cool = int(times["cool"])
+        deco = int(times["deco"])
         if cycle_idx < config.extra_first_cycles_count:
             heat += config.extra_first_cycles
-
         earliest_start_four = max(next_send_time, arm_available[arm], furnace_available)
-        plan = _find_best_feasible_plan(
-            earliest_start_four=earliest_start_four,
-            latest_end_time=config.end_time,
-            heat=heat,
-            cool=cool,
-            deco=deco,
-            cooling_zone_available=cooling_zone_available,
-            predeco_available=predeco_available,
-            deco_available=deco_available,
-            pause_windows=pause_windows,
-            latence_max=config.latence_max,
-            latence_cible=config.latence_cible,
-            arbitration_weights=config.arbitration_weights,
-        )
-
+        plan = _find_best_feasible_plan(earliest_start_four, config.end_time, heat, cool, deco, cooling_zone_available, predeco_available, deco_available, pause_windows, config.latence_max, config.latence_cible, config.arbitration_weights)
         if plan is None:
             break
-
-        required_keys = ["start_four", "end_four", "zone", "start_zone", "cool_finish", "enter_predeco", "start_deco", "end_deco", "latence", "pause_reason"]
-        for key in required_keys:
-            if key not in plan:
-                raise KeyError(f"Clé manquante dans plan : {key} -> {plan}")
-
         start_four = plan["start_four"]
         end_four = plan["end_four"]
         chosen_zone = plan["zone"]
@@ -205,43 +144,13 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         end_deco = plan["end_deco"]
         latence = plan["latence"]
         pause_reason = plan["pause_reason"]
-
         if latence > config.latence_max:
             raise ScenarioInfeasibleError(f"Latence observée {latence} > latence max autorisée {config.latence_max}")
         if end_deco > config.end_time:
             break
-        if chosen_zone not in cooling_zone_available:
-            raise KeyError(f"Zone inconnue : {chosen_zone}")
-
         zone_occupation = enter_predeco - start_zone
         predeco_occupation = start_deco - enter_predeco
-
-        results.append(
-            {
-                "PRM": config.prm_name,
-                "Bras": arm,
-                "Produit": product,
-                "Début Four (min)": start_four,
-                "Fin Four (min)": end_four,
-                "Début Refroidissement (min)": start_zone,
-                "Fin Refroidissement (min)": cool_finish,
-                "Fin Occupation Refroidissement (min)": enter_predeco,
-                "Début Avant Déco (min)": enter_predeco,
-                "Fin Avant Déco (min)": start_deco,
-                "Début Déco (min)": start_deco,
-                "Fin Déco (min)": end_deco,
-                "Latence (min)": latence,
-                "Attente avant four (min)": max(0, start_four - arm_available[arm]),
-                "Attente avant déco (min)": latence,
-                "Temps zone 1 (min)": zone_occupation if chosen_zone == "Z1" else 0,
-                "Temps zone 2 (min)": zone_occupation if chosen_zone == "Z2" else 0,
-                "Temps avant déco (min)": predeco_occupation,
-                "Chemin refroidissement": chosen_zone,
-                "Motif décalage": pause_reason,
-                "Cycle": cycle_idx + 1,
-            }
-        )
-
+        results.append({"PRM": config.prm_name, "Bras": arm, "Produit": product, "Début Four (min)": start_four, "Fin Four (min)": end_four, "Début Refroidissement (min)": start_zone, "Fin Refroidissement (min)": cool_finish, "Fin Occupation Refroidissement (min)": enter_predeco, "Début Avant Déco (min)": enter_predeco, "Fin Avant Déco (min)": start_deco, "Début Déco (min)": start_deco, "Fin Déco (min)": end_deco, "Latence (min)": latence, "Attente avant four (min)": max(0, start_four - arm_available[arm]), "Attente avant déco (min)": latence, "Temps zone 1 (min)": zone_occupation if chosen_zone == "Z1" else 0, "Temps zone 2 (min)": zone_occupation if chosen_zone == "Z2" else 0, "Temps avant déco (min)": predeco_occupation, "Chemin refroidissement": chosen_zone, "Motif décalage": pause_reason, "Cycle": cycle_idx + 1})
         furnace_available = end_four + config.four_gap_min
         cooling_zone_available[chosen_zone] = enter_predeco
         predeco_available = start_deco
@@ -249,7 +158,6 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         arm_available[arm] = end_deco
         next_send_time = start_four + config.send_gap_min
         cycle_idx += 1
-
     return pd.DataFrame(results)
 
 
@@ -257,16 +165,7 @@ def format_simulation_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df.copy()
     out = df.copy()
-    mapping = [
-        ("Début Four (min)", "Début Four"),
-        ("Fin Four (min)", "Fin Four"),
-        ("Début Refroidissement (min)", "Début Refroidissement"),
-        ("Fin Refroidissement (min)", "Fin Refroidissement"),
-        ("Début Avant Déco (min)", "Début Avant Déco"),
-        ("Fin Avant Déco (min)", "Fin Avant Déco"),
-        ("Début Déco (min)", "Début Déco"),
-        ("Fin Déco (min)", "Fin Déco"),
-    ]
+    mapping = [("Début Four (min)", "Début Four"), ("Fin Four (min)", "Fin Four"), ("Début Refroidissement (min)", "Début Refroidissement"), ("Fin Refroidissement (min)", "Fin Refroidissement"), ("Début Avant Déco (min)", "Début Avant Déco"), ("Fin Avant Déco (min)", "Fin Avant Déco"), ("Début Déco (min)", "Début Déco"), ("Fin Déco (min)", "Fin Déco")]
     for c_in, c_out in mapping:
         if c_in in out.columns:
             out[c_out] = out[c_in].apply(format_time)
@@ -297,13 +196,7 @@ def compute_prm_kpis(df: pd.DataFrame, start_time: int, end_time: int) -> dict:
     total_available = max(1, end_time - start_time)
     total_four = (df["Fin Four (min)"] - df["Début Four (min)"]).sum()
     taux_four = (total_four / total_available) * 100
-    return {
-        "production": int(len(df)),
-        "taux_four": round(taux_four, 1),
-        "latence_moy": round(df["Latence (min)"].mean(), 2),
-        "latence_max_obs": round(df["Latence (min)"].max(), 2),
-        "par_produit": df["Produit"].value_counts().to_dict(),
-    }
+    return {"production": int(len(df)), "taux_four": round(taux_four, 1), "latence_moy": round(df["Latence (min)"].mean(), 2), "latence_max_obs": round(df["Latence (min)"].max(), 2), "par_produit": df["Produit"].value_counts().to_dict()}
 
 
 def get_process_state_at_time(df: pd.DataFrame, current_minute: int) -> dict:
@@ -330,26 +223,3 @@ def get_process_state_at_time(df: pd.DataFrame, current_minute: int) -> dict:
         elif start_deco <= current_minute < end_deco:
             state["Déco"].append(label)
     return state
-
-
-def validate_single_capacity_per_sector(df: pd.DataFrame) -> bool:
-    if df.empty:
-        return True
-    events = []
-    for _, row in df.iterrows():
-        events.extend([
-            (row["Début Four (min)"], "four", +1),
-            (row["Fin Four (min)"], "four", -1),
-            (row["Début Refroidissement (min)"], f"ref_{row['Chemin refroidissement']}", +1),
-            (row["Fin Occupation Refroidissement (min)"], f"ref_{row['Chemin refroidissement']}", -1),
-            (row["Début Avant Déco (min)"], "pre", +1),
-            (row["Fin Avant Déco (min)"], "pre", -1),
-            (row["Début Déco (min)"], "deco", +1),
-            (row["Fin Déco (min)"], "deco", -1),
-        ])
-    counts = {"four": 0, "ref_Z1": 0, "ref_Z2": 0, "pre": 0, "deco": 0}
-    for _, sector, delta in sorted(events, key=lambda x: (x[0], x[2])):
-        counts[sector] += delta
-        if counts[sector] > 1:
-            return False
-    return True
