@@ -288,8 +288,12 @@ with tab1:
             import inspect
             import simulation
             
-            st.write("Fichier réellement chargé :", simulation.__file__)
-            st.write("Signature réellement chargée :", inspect.signature(PRMSimulationConfig))
+            
+            st.write("DEBUG cycle_times_all:", cycle_times_all)
+            st.write("DEBUG selected_prm:", selected_prm)
+            st.write("DEBUG cycle_times_selected:", cycle_times_all.get(selected_prm))
+            st.write("TYPE:", type(cycle_times_all.get(selected_prm)))
+
 
 
             cfg = PRMSimulationConfig(
