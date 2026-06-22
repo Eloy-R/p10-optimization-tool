@@ -280,6 +280,7 @@ with tab1:
             DEFAULT_FIRST_ARMS[selected_prm],
         )
     if st.button("Lancer la simulation", type="primary"):
+
         cfg_kwargs = {
             "prm_name": selected_prm,
             "start_time": start_time,
@@ -293,50 +294,45 @@ with tab1:
             "deco_gap_min": deco_gap_min,
             "four_gap_min": FOUR_GAP_MIN,
             "pause_windows": pause_windows,
-    }
+        }
+    
+        st.write("DEBUG cfg_kwargs :", cfg_kwargs)
+        st.write("DEBUG types :", {k: str(type(v)) for k, v in cfg_kwargs.items()})
 
-    st.write("DEBUG cfg_kwargs :", cfg_kwargs)
-    st.write("DEBUG types :", {k: str(type(v)) for k, v in cfg_kwargs.items()})
-
-    try:
-        cfg = PRMSimulationConfig(**cfg_kwargs)
-        st.success("cfg créé correctement")
-    except Exception as e:
-        st.error("Erreur exacte à la création de cfg")
-        st.code(repr(e), language="text")
-        st.stop()
-   
-    try:
-                df_raw = simulate_prm(cfg)
-                df_view = format_simulation_df(df_raw)
-                gantt_df = build_gantt_source(df_raw)
-                kpis = compute_prm_kpis(df_raw, start_time, end_time)
-
-                st.session_state["df_raw"] = df_raw
-                st.session_state["df_view"] = df_view
-                st.session_state["gantt_df"] = gantt_df
-                st.session_state["kpis"] = kpis
-                st.session_state["selected_prm"] = selected_prm
-                st.session_state["process_time_slider"] = start_time
-                st.session_state["process_step_widget"] = 10
-                st.session_state["process_autoplay_widget"] = False
-                st.session_state["_next_process_time"] = None
-
-            except ScenarioInfeasibleError as e:
-                st.session_state["df_raw"] = None
-                st.session_state["df_view"] = None
-                st.session_state["gantt_df"] = None
-                st.session_state["kpis"] = None
-                st.error("Scénario infaisable : les contraintes process ne peuvent pas être respectées avec les paramètres actuels.")
-                st.code(str(e), language="text")
-
-            except Exception as e:
-                st.session_state["df_raw"] = None
-                st.session_state["df_view"] = None
-                st.session_state["gantt_df"] = None
-                st.session_state["kpis"] = None
-                st.error("Une erreur technique inattendue est survenue pendant la simulation.")
-                st.code(str(e), language="text")
+        try:
+            cfg = PRMSimulationConfig(**cfg_kwargs)
+            st.success("✅ cfg créé correctement")
+        except Exception as e:
+            st.error("❌ Erreur exacte à la création de cfg")
+            st.code(repr(e), language="text")
+            st.stop()
+    
+        # ✅ maintenant on teste simulation
+        try:
+            df_raw = simulate_prm(cfg)
+            df_view = format_simulation_df(df_raw)
+            gantt_df = build_gantt_source(df_raw)
+            kpis = compute_prm_kpis(df_raw, start_time, end_time)
+    
+            st.session_state["df_raw"] = df_raw
+            st.session_state["df_view"] = df_view
+            st.session_state["gantt_df"] = gantt_df
+            st.session_state["kpis"] = kpis
+            st.session_state["selected_prm"] = selected_prm
+            st.session_state["process_time_slider"] = start_time
+            st.session_state["process_step_widget"] = 10
+            st.session_state["process_autoplay_widget"] = False
+            st.session_state["_next_process_time"] = None
+    
+        except ScenarioInfeasibleError as e:
+            st.error("❌ Scénario infaisable")
+            st.code(str(e), language="text")
+            st.stop()
+    
+        except Exception as e:
+            st.error("❌ Erreur dans simulate_prm")
+            st.code(repr(e), language="text")
+            st.stop()
             
 
     if st.session_state["df_view"] is not None and st.session_state["selected_prm"] == selected_prm:
