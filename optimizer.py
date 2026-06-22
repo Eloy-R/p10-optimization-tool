@@ -40,68 +40,29 @@ def _build_arms_config_from_order(order: Tuple[str, str, str, str]) -> Dict[int,
 
 def _compute_multi_criteria_score(row: pd.Series, mode_optim: str) -> float:
     profile = WEIGHT_PROFILES.get(mode_optim, WEIGHT_PROFILES["Équilibre"])["scenario"]
-    return round(
-        profile["prod"] * float(row["Production"])
-        - profile["lat_moy"] * float(row["Latence moy"])
-        - profile["lat_max"] * float(row["Latence max observée"])
-        + profile["taux_four"] * float(row["Taux four (%)"])
-        - profile["pause"] * float(row["Pause (min)"])
-        - profile["lat_cible"] * float(row["Latence cible acceptée (min)"]),
-        3,
-    )
+    return round(profile["prod"] * float(row["Production"]) - profile["lat_moy"] * float(row["Latence moy"]) - profile["lat_max"] * float(row["Latence max observée"]) + profile["taux_four"] * float(row["Taux four (%)"]) - profile["pause"] * float(row["Pause (min)"]) - profile["lat_cible"] * float(row["Latence cible acceptée (min)"]), 3)
 
 
 def evaluate_optimization(prm_name: str, start_time: int, end_time: int, base_config: dict, latence_values: List[int], send_gap_min: int, deco_gap_min: int, pause_start_matin: int, pause_start_aprem: int, pause_durations: List[int], mode_optim: str = "Équilibre", latence_limite_process: int = 20):
     profile = WEIGHT_PROFILES.get(mode_optim, WEIGHT_PROFILES["Équilibre"])
     unique_orders = _unique_orders_from_current_mix(base_config["arms_config"])
     records = []
-
     for pause_duration in pause_durations:
         pause_windows = _pause_windows_from_duration(pause_start_matin, pause_start_aprem, pause_duration)
         for order in unique_orders:
             arms_config = _build_arms_config_from_order(order)
             order_label = " / ".join(order)
             for latence_cible in latence_values:
-                cfg = PRMSimulationConfig(
-                    prm_name=prm_name,
-                    start_time=start_time,
-                    end_time=end_time,
-                    arms_config=arms_config,
-                    cycle_times=base_config["cycle_times"],
-                    first_arm=base_config["first_arm"],
-                    send_gap_min=send_gap_min,
-                    latence_max=latence_limite_process,
-                    latence_cible=latence_cible,
-                    deco_gap_min=deco_gap_min,
-                    four_gap_min=FOUR_GAP_MIN,
-                    pause_windows=pause_windows,
-                    arbitration_weights=profile["plan"],
-                )
+                cfg = PRMSimulationConfig(prm_name=prm_name, start_time=start_time, end_time=end_time, arms_config=arms_config, cycle_times=base_config["cycle_times"], first_arm=base_config["first_arm"], send_gap_min=send_gap_min, latence_max=latence_limite_process, latence_cible=latence_cible, deco_gap_min=deco_gap_min, four_gap_min=FOUR_GAP_MIN, pause_windows=pause_windows, arbitration_weights=profile["plan"])
                 df = simulate_prm(cfg)
                 kpis = compute_prm_kpis(df, start_time, end_time)
-                records.append({
-                    "Pause (min)": pause_duration,
-                    "Bras 1": order[0],
-                    "Bras 2": order[1],
-                    "Bras 3": order[2],
-                    "Bras 4": order[3],
-                    "Ordre bras": order_label,
-                    "Latence cible acceptée (min)": latence_cible,
-                    "Production": int(kpis["production"]),
-                    "Latence moy": round(float(kpis["latence_moy"]), 3),
-                    "Latence max observée": round(float(kpis["latence_max_obs"]), 3),
-                    "Taux four (%)": round(float(kpis["taux_four"]), 3),
-                    "Mode optimisation": mode_optim,
-                })
-
+                records.append({"Pause (min)": pause_duration, "Bras 1": order[0], "Bras 2": order[1], "Bras 3": order[2], "Bras 4": order[3], "Ordre bras": order_label, "Latence cible acceptée (min)": latence_cible, "Production": int(kpis["production"]), "Latence moy": round(float(kpis["latence_moy"]), 3), "Latence max observée": round(float(kpis["latence_max_obs"]), 3), "Taux four (%)": round(float(kpis["taux_four"]), 3), "Mode optimisation": mode_optim})
     df_scenarios = pd.DataFrame(records)
     if df_scenarios.empty:
         return df_scenarios, None
-
     df_scenarios = df_scenarios[df_scenarios["Latence max observée"] <= latence_limite_process].copy()
     if df_scenarios.empty:
         return df_scenarios, None
-
     df_scenarios["Score multicritère"] = df_scenarios.apply(lambda row: _compute_multi_criteria_score(row, mode_optim), axis=1)
     df_scenarios = df_scenarios.sort_values(by=["Score multicritère", "Production", "Latence moy", "Taux four (%)"], ascending=[False, False, True, False]).reset_index(drop=True)
     df_scenarios["Rang global"] = range(1, len(df_scenarios) + 1)
@@ -119,31 +80,10 @@ def evaluate_overtime_summary_from_best(best_scenario: Optional[dict], prm_name:
     latence_cible = int(best_scenario["Latence cible acceptée (min)"])
     mode_optim = best_scenario.get("Mode optimisation", "Équilibre")
     profile = WEIGHT_PROFILES.get(mode_optim, WEIGHT_PROFILES["Équilibre"])
-
     rows = []
     for overtime in overtime_values:
-        cfg = PRMSimulationConfig(
-            prm_name=prm_name,
-            start_time=start_time,
-            end_time=end_time + overtime,
-            arms_config=arms_config,
-            cycle_times=base_config["cycle_times"],
-            first_arm=base_config["first_arm"],
-            send_gap_min=send_gap_min,
-            latence_max=20,
-            latence_cible=latence_cible,
-            deco_gap_min=deco_gap_min,
-            four_gap_min=FOUR_GAP_MIN,
-            pause_windows=pause_windows,
-            arbitration_weights=profile["plan"],
-        )
+        cfg = PRMSimulationConfig(prm_name=prm_name, start_time=start_time, end_time=end_time + overtime, arms_config=arms_config, cycle_times=base_config["cycle_times"], first_arm=base_config["first_arm"], send_gap_min=send_gap_min, latence_max=20, latence_cible=latence_cible, deco_gap_min=deco_gap_min, four_gap_min=FOUR_GAP_MIN, pause_windows=pause_windows, arbitration_weights=profile["plan"])
         df = simulate_prm(cfg)
         kpis = compute_prm_kpis(df, start_time, end_time + overtime)
-        rows.append({
-            "Overtime (min)": overtime,
-            "Production": int(kpis["production"]),
-            "Latence moy": round(float(kpis["latence_moy"]), 3),
-            "Latence max observée": round(float(kpis["latence_max_obs"]), 3),
-            "Taux four (%)": round(float(kpis["taux_four"]), 3),
-        })
+        rows.append({"Overtime (min)": overtime, "Production": int(kpis["production"]), "Latence moy": round(float(kpis["latence_moy"]), 3), "Latence max observée": round(float(kpis["latence_max_obs"]), 3), "Taux four (%)": round(float(kpis["taux_four"]), 3)})
     return pd.DataFrame(rows)
