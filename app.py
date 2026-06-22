@@ -280,36 +280,32 @@ with tab1:
             DEFAULT_FIRST_ARMS[selected_prm],
         )
 
-        if st.button("Lancer la simulation", type="primary"):
-            # Simulation stable : la latence pilotée par l'UI sert à l'optimisation,
-            # pas à forcer la simulation. On garde ici une configuration neutre.
+    if st.button("Lancer la simulation", type="primary"):
+            cfg_kwargs = {
+                "prm_name": selected_prm,
+                "start_time": start_time,
+                "end_time": end_time,
+                "arms_config": arms_config,
+                "cycle_times": cycle_times_all[selected_prm],
+                "first_arm": first_arm,
+                "send_gap_min": send_gap_min,
+                "latence_max": 20,
+                "latence_cible": 0,
+                "deco_gap_min": deco_gap_min,
+                "four_gap_min": FOUR_GAP_MIN,
+                "pause_windows": pause_windows,
+            }
         
-    
-            import inspect
-            import simulation
-            
-            
-            st.write("DEBUG cycle_times_all:", cycle_times_all)
-            st.write("DEBUG selected_prm:", selected_prm)
-            st.write("DEBUG cycle_times_selected:", cycle_times_all.get(selected_prm))
-            st.write("TYPE:", type(cycle_times_all.get(selected_prm)))
+            st.write("DEBUG cfg_kwargs :", cfg_kwargs)
+            st.write("DEBUG types :", {k: str(type(v)) for k, v in cfg_kwargs.items()})
 
-
-
-            cfg = PRMSimulationConfig(
-                prm_name=selected_prm,
-                start_time=start_time,
-                end_time=end_time,
-                arms_config=arms_config,
-                cycle_times=cycle_times_all[selected_prm],
-                first_arm=first_arm,
-                send_gap_min=send_gap_min,
-                latence_max=20,
-                latence_cible=0,
-                deco_gap_min=deco_gap_min,
-                four_gap_min=FOUR_GAP_MIN,
-                pause_windows=pause_windows,
-            )
+    try:
+        cfg = PRMSimulationConfig(**cfg_kwargs)
+        st.success("cfg créé correctement")
+    except Exception as e:
+        st.error("Erreur exacte à la création de cfg")
+        st.code(repr(e), language="text")
+        st.stop()
 
             try:
                 df_raw = simulate_prm(cfg)
