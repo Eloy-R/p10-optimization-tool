@@ -306,8 +306,7 @@ with tab1:
         st.code(repr(e), language="text")
         st.stop()
    
-
-            try:
+    try:
                 df_raw = simulate_prm(cfg)
                 df_view = format_simulation_df(df_raw)
                 gantt_df = build_gantt_source(df_raw)
@@ -338,6 +337,7 @@ with tab1:
                 st.session_state["kpis"] = None
                 st.error("Une erreur technique inattendue est survenue pendant la simulation.")
                 st.code(str(e), language="text")
+            
 
     if st.session_state["df_view"] is not None and st.session_state["selected_prm"] == selected_prm:
         kpis = st.session_state["kpis"]
