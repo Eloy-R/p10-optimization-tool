@@ -22,7 +22,14 @@ from simulation import (
     get_process_state_at_time,
     simulate_prm,
 )
-from optimizer import evaluate_optimization, evaluate_overtime_summary_from_best
+
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from optimizer import (
+    evaluate_optimization,
+    evaluate_overtime_summary_from_best,
+    WEIGHT_PROFILES,
+)
+
 from exports import build_excel_bytes
 
 FOUR_GAP_MIN = 1
