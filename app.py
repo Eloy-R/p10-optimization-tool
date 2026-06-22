@@ -285,11 +285,11 @@ with tab1:
             # pas à forcer la simulation. On garde ici une configuration neutre.
         
     
-    import inspect
-    import simulation
-    
-    st.write("Fichier réellement chargé :", simulation.__file__)
-    st.write("Signature réellement chargée :", inspect.signature(PRMSimulationConfig))
+            import inspect
+            import simulation
+            
+            st.write("Fichier réellement chargé :", simulation.__file__)
+            st.write("Signature réellement chargée :", inspect.signature(PRMSimulationConfig))
 
 
             cfg = PRMSimulationConfig(
