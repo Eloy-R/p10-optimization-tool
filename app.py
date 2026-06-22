@@ -25,15 +25,11 @@ from simulation import (
 from optimizer import evaluate_optimization, evaluate_overtime_summary_from_best
 from exports import build_excel_bytes
 
-# Marge fixe entre deux passages successifs au four.
 FOUR_GAP_MIN = 1
 
 st.set_page_config(page_title="Simulateur P10", layout="wide")
 
 
-# =========================================================
-# OUTILS
-# =========================================================
 def safe_minute_value(value, fallback: int = 0) -> int:
     if isinstance(value, (list, tuple)):
         if len(value) == 0:
@@ -103,7 +99,6 @@ def _default_arm_indices(available_products):
     if cloison_idx is None:
         cloison_idx = 1 if len(available_products) > 1 else 0
 
-    # Ordre par défaut demandé : Cuve / Cloison / Cuve / Cloison
     return [cuve_idx, cloison_idx, cuve_idx, cloison_idx]
 
 
@@ -133,9 +128,6 @@ def build_prm_form(prm_name: str, available_products, default_first_arm: int):
     return first_arm, arms_config
 
 
-# =========================================================
-# SESSION STATE
-# =========================================================
 if "cycle_times_all" not in st.session_state:
     rows = []
     for prm_name, products in DEFAULT_CYCLE_TIMES.items():
@@ -242,9 +234,6 @@ with st.sidebar:
 
 tab1, tab2, tab3 = st.tabs(["Simulation", "Optimisation", "Table des temps"])
 
-# =========================================================
-# ONGLET TEMPS DE CYCLE
-# =========================================================
 with tab3:
     st.subheader(f"Temps de cycle – {PRM_LABELS[selected_prm]}")
     full_df = st.session_state["cycle_times_all"].copy()
@@ -263,9 +252,6 @@ with tab3:
     )
     update_selected_cycle_times(selected_prm, edited.copy())
 
-# =========================================================
-# ONGLET SIMULATION
-# =========================================================
 with tab1:
     st.header(f"Simulation – {PRM_LABELS[selected_prm]}")
     cycle_times_all = cycle_times_from_editor(st.session_state["cycle_times_all"])
@@ -279,63 +265,56 @@ with tab1:
             available_products,
             DEFAULT_FIRST_ARMS[selected_prm],
         )
-    
-    if st.button("Lancer la simulation", type="primary"):
-    
-        cfg_kwargs = {
-            "prm_name": selected_prm,
-            "start_time": start_time,
-            "end_time": end_time,
-            "arms_config": arms_config,
-            "cycle_times": cycle_times_all[selected_prm],
-            "first_arm": first_arm,
-            "send_gap_min": send_gap_min,
-            "latence_max": 20,
-            "latence_cible": 0,
-            "deco_gap_min": deco_gap_min,
-            "four_gap_min": FOUR_GAP_MIN,
-            "pause_windows": pause_windows,
-        }
-    
-        st.write("DEBUG cfg_kwargs :", cfg_kwargs)
-    
-        try:
-            cfg = PRMSimulationConfig(**cfg_kwargs)
-            st.success("✅ cfg créé correctement")
-    
-        except Exception as e:
-            import traceback
-            st.error("❌ Erreur création cfg")
-            st.code(traceback.format_exc(), language="python")
-            st.stop()
-    
-        # ✅ simulation ici (même indentation !)
-        try:
-            df_raw = simulate_prm(cfg)
-            df_view = format_simulation_df(df_raw)
-            gantt_df = build_gantt_source(df_raw)
-            kpis = compute_prm_kpis(df_raw, start_time, end_time)
-    
-            st.session_state["df_raw"] = df_raw
-            st.session_state["df_view"] = df_view
-            st.session_state["gantt_df"] = gantt_df
-            st.session_state["kpis"] = kpis
-            st.session_state["selected_prm"] = selected_prm
-            st.session_state["process_time_slider"] = start_time
-            st.session_state["_next_process_time"] = None
-    
-        except ScenarioInfeasibleError as e:
-            st.error("❌ Scénario infaisable")
-            st.code(str(e), language="text")
-            st.stop()
-    
-        except Exception as e:
-            import traceback
-            st.error("❌ ERREUR simulate_prm")
-            st.code(traceback.format_exc(), language="python")
-            st.stop()
 
-            
+        if st.button("Lancer la simulation", type="primary"):
+            cfg = PRMSimulationConfig(
+                prm_name=selected_prm,
+                start_time=start_time,
+                end_time=end_time,
+                arms_config=arms_config,
+                cycle_times=cycle_times_all[selected_prm],
+                first_arm=first_arm,
+                send_gap_min=send_gap_min,
+                latence_max=20,
+                latence_cible=0,
+                deco_gap_min=deco_gap_min,
+                four_gap_min=FOUR_GAP_MIN,
+                pause_windows=pause_windows,
+            )
+
+            try:
+                df_raw = simulate_prm(cfg)
+                df_view = format_simulation_df(df_raw)
+                gantt_df = build_gantt_source(df_raw)
+                kpis = compute_prm_kpis(df_raw, start_time, end_time)
+
+                st.session_state["df_raw"] = df_raw
+                st.session_state["df_view"] = df_view
+                st.session_state["gantt_df"] = gantt_df
+                st.session_state["kpis"] = kpis
+                st.session_state["selected_prm"] = selected_prm
+                st.session_state["process_time_slider"] = start_time
+                st.session_state["process_step_widget"] = 10
+                st.session_state["process_autoplay_widget"] = False
+                st.session_state["_next_process_time"] = None
+
+            except ScenarioInfeasibleError as e:
+                st.session_state["df_raw"] = None
+                st.session_state["df_view"] = None
+                st.session_state["gantt_df"] = None
+                st.session_state["kpis"] = None
+                st.error("Scénario infaisable : les contraintes process ne peuvent pas être respectées avec les paramètres actuels.")
+                st.code(str(e), language="text")
+
+            except Exception as e:
+                import traceback
+                st.session_state["df_raw"] = None
+                st.session_state["df_view"] = None
+                st.session_state["gantt_df"] = None
+                st.session_state["kpis"] = None
+                st.error("Erreur détaillée dans simulate_prm")
+                st.code(traceback.format_exc(), language="python")
+                st.stop()
 
     if st.session_state["df_view"] is not None and st.session_state["selected_prm"] == selected_prm:
         kpis = st.session_state["kpis"]
@@ -463,9 +442,6 @@ with tab1:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-# =========================================================
-# ONGLET OPTIMISATION
-# =========================================================
 with tab2:
     st.header(f"Optimisation – {PRM_LABELS[selected_prm]}")
 
