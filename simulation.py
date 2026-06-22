@@ -122,21 +122,64 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
     deco_available = config.start_time
     results = []
     cycle_idx = 0
+
     while True:
         arm = arm_order[cycle_idx % len(arm_order)]
         product = config.arms_config[arm]
+
         if product not in config.cycle_times:
             raise ValueError(f"Produit '{product}' introuvable pour {config.prm_name}")
-        times = config.cycle_times[product]
-        heat = int(times["heat"])
-        cool = int(times["cool"])
-        deco = int(times["deco"])
+
+        try:
+            times = config.cycle_times[product]
+            heat = int(times["heat"])
+            cool = int(times["cool"])
+            deco = int(times["deco"])
+        except Exception as e:
+            raise ValueError(f"Erreur dans les temps du produit {product} : {config.cycle_times.get(product)}") from e
+
         if cycle_idx < config.extra_first_cycles_count:
             heat += config.extra_first_cycles
+
         earliest_start_four = max(next_send_time, arm_available[arm], furnace_available)
-        plan = _find_best_feasible_plan(earliest_start_four, config.end_time, heat, cool, deco, cooling_zone_available, predeco_available, deco_available, pause_windows, config.latence_max, config.latence_cible)
+
+        plan = _find_best_feasible_plan(
+            earliest_start_four,
+            config.end_time,
+            heat,
+            cool,
+            deco,
+            cooling_zone_available,
+            predeco_available,
+            deco_available,
+            pause_windows,
+            config.latence_max,
+            config.latence_cible,
+        )
+
         if plan is None:
+            print(f"Aucun plan trouvé pour arm={arm}, product={product}")
             break
+
+        if not isinstance(plan, dict):
+            raise TypeError(f"plan invalide retourné par _find_best_feasible_plan : {plan}")
+
+        required_keys = [
+            "start_four",
+            "end_four",
+            "zone",
+            "start_zone",
+            "cool_finish",
+            "enter_predeco",
+            "start_deco",
+            "end_deco",
+            "latence",
+            "pause_reason",
+        ]
+        for key in required_keys:
+            if key not in plan:
+                raise KeyError(f"Clé manquante dans plan : {key} -> {plan}")
+
         start_four = plan["start_four"]
         end_four = plan["end_four"]
         chosen_zone = plan["zone"]
@@ -147,12 +190,16 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         end_deco = plan["end_deco"]
         latence = plan["latence"]
         pause_reason = plan["pause_reason"]
+
         if latence > config.latence_max:
             raise ScenarioInfeasibleError(f"Latence observée {latence} > latence max autorisée {config.latence_max}")
+
         if end_deco > config.end_time:
             break
+
         zone_occupation = enter_predeco - start_zone
         predeco_occupation = start_deco - enter_predeco
+
         results.append({
             "PRM": config.prm_name,
             "Bras": arm,
@@ -176,6 +223,10 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
             "Motif décalage": pause_reason,
             "Cycle": cycle_idx + 1,
         })
+
+        if chosen_zone not in cooling_zone_available:
+            raise KeyError(f"Zone inconnue : {chosen_zone}")
+
         furnace_available = end_four + config.four_gap_min
         cooling_zone_available[chosen_zone] = enter_predeco
         predeco_available = start_deco
@@ -183,6 +234,7 @@ def simulate_prm(config: PRMSimulationConfig) -> pd.DataFrame:
         arm_available[arm] = end_deco
         next_send_time = start_four + config.send_gap_min
         cycle_idx += 1
+
     return pd.DataFrame(results)
 
 
@@ -267,8 +319,8 @@ def validate_single_capacity_per_sector(df: pd.DataFrame) -> bool:
         events.extend([
             (row["Début Four (min)"], "four", +1),
             (row["Fin Four (min)"], "four", -1),
-            (row["Début Refroidissement (min)"], f"ref_{row['Chemin refroidissement']}", +1),
-            (row["Fin Occupation Refroidissement (min)"], f"ref_{row['Chemin refroidissement']}", -1),
+            (row["Début Refroidissement (min)"] , f"ref_{row['Chemin refroidissement']}", +1),
+            (row["Fin Occupation Refroidissement (min)"] , f"ref_{row['Chemin refroidissement']}", -1),
             (row["Début Avant Déco (min)"], "pre", +1),
             (row["Fin Avant Déco (min)"], "pre", -1),
             (row["Début Déco (min)"], "deco", +1),
