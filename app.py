@@ -405,8 +405,9 @@ with tab1:
         )
         st.download_button("Télécharger Excel", data=excel_bytes, file_name=f"simulation_{selected_prm}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-with tab2:
+    with tab2:
     st.header(f"Optimisation – {PRM_LABELS[selected_prm]}")
+
     cycle_times_all = cycle_times_from_editor(st.session_state["cycle_times_all"])
     available_products = list(cycle_times_all.get(selected_prm, {}).keys())
 
@@ -417,26 +418,59 @@ with tab2:
             "Mode d'optimisation",
             ["Production max", "Équilibre", "Latence faible"],
             index=1,
-            help="Production max = priorité au volume ; Équilibre = compromis production / latence / taux four ; Latence faible = priorité à la qualité process.",
+            help=(
+                "Production max = priorité au volume ; "
+                "Équilibre = compromis production / latence / taux four ; "
+                "Latence faible = priorité à la qualité process."
+            ),
         )
-        st.write("L'optimisation compare : les pauses (0 / 30 / 60 min matin + soir), les permutations du mix actuellement choisi sur les 4 bras, et plusieurs latences cibles acceptées.")
-        st.write(f"La limite dure process reste fixée à {latence_limite_optim} min : aucune proposition ne dépassera cette valeur.")
-        st.write("Le tableau reprend uniquement 3 scénarios : le meilleur pour 0 min, 30 min et 60 min de pause.")
+
+        st.write(
+            "L'optimisation compare : les pauses (0 / 30 / 60 min matin + soir), "
+            "les permutations du mix actuellement choisi sur les 4 bras, "
+            "et plusieurs latences cibles acceptées."
+        )
+        st.write(
+            f"La limite dure process reste fixée à {latence_limite_optim} min : "
+            "aucune proposition ne dépassera cette valeur."
+        )
+        st.write(
+            "Le tableau reprend uniquement 3 scénarios : "
+            "le meilleur pour 0 min, 30 min et 60 min de pause."
+        )
 
         if st.button("Lancer l'optimisation"):
             base_config = {
                 "arms_config": {
-                    1: st.session_state.get(f"{selected_prm}_arm_1", available_products[0]),
-                    2: st.session_state.get(f"{selected_prm}_arm_2", available_products[min(1, len(available_products) - 1)]),
-                    3: st.session_state.get(f"{selected_prm}_arm_3", available_products[min(2, len(available_products) - 1)]),
-                    4: st.session_state.get(f"{selected_prm}_arm_4", available_products[min(3, len(available_products) - 1)]),
+                    1: st.session_state.get(
+                        f"{selected_prm}_arm_1", available_products[0]
+                    ),
+                    2: st.session_state.get(
+                        f"{selected_prm}_arm_2",
+                        available_products[min(1, len(available_products) - 1)],
+                    ),
+                    3: st.session_state.get(
+                        f"{selected_prm}_arm_3",
+                        available_products[min(2, len(available_products) - 1)],
+                    ),
+                    4: st.session_state.get(
+                        f"{selected_prm}_arm_4",
+                        available_products[min(3, len(available_products) - 1)],
+                    ),
                 },
                 "cycle_times": cycle_times_all[selected_prm],
-                "first_arm": st.session_state.get(f"first_arm_{selected_prm}", DEFAULT_FIRST_ARMS[selected_prm]),
+                "first_arm": st.session_state.get(
+                    f"first_arm_{selected_prm}",
+                    DEFAULT_FIRST_ARMS[selected_prm],
+                ),
             }
-            pause_start_matin = pause_matin_start.hour * 60 + pause_matin_start.minute
-            pause_start_soir = pause_soir_start.hour * 60 + pause_soir_start.minute
-            latence_values = [v for v in [0, 2, 4, 6, 8, 10, 15, 20] if v <= latence_limite_optim]
+
+            pause_start_matin_min = pause_matin_start.hour * 60 + pause_matin_start.minute
+            pause_start_soir_min = pause_soir_start.hour * 60 + pause_soir_start.minute
+
+            latence_values = [
+                v for v in [0, 2, 4, 6, 8, 10, 15, 20] if v <= latence_limite_optim
+            ]
             if latence_limite_optim not in latence_values:
                 latence_values.append(latence_limite_optim)
             latence_values = sorted(set(latence_values))
@@ -449,8 +483,8 @@ with tab2:
                 latence_values=latence_values,
                 send_gap_min=send_gap_min,
                 deco_gap_min=deco_gap_min,
-                pause_start_matin=pause_start_matin,
-                pause_start_aprem=pause_start_soir,
+                pause_start_matin=pause_start_matin_min,
+                pause_start_aprem=pause_start_soir_min,
                 pause_durations=[0, 30, 60],
                 mode_optim=mode_optim,
                 latence_limite_process=latence_limite_optim,
@@ -459,7 +493,10 @@ with tab2:
             df_top3 = pd.DataFrame()
             if df_scenarios_all is not None and not df_scenarios_all.empty:
                 df_top3 = (
-                    df_scenarios_all.sort_values(by=["Rang pause", "Pause (min)"], ascending=[True, True])
+                    df_scenarios_all.sort_values(
+                        by=["Rang pause", "Pause (min)"],
+                        ascending=[True, True],
+                    )
                     .groupby("Pause (min)", as_index=False)
                     .first()
                     .sort_values("Pause (min)")
@@ -474,8 +511,8 @@ with tab2:
                 base_config=base_config,
                 send_gap_min=send_gap_min,
                 deco_gap_min=deco_gap_min,
-                pause_start_matin=pause_start_matin,
-                pause_start_aprem=pause_start_soir,
+                pause_start_matin=pause_start_matin_min,
+                pause_start_aprem=pause_start_soir_min,
                 overtime_values=[0, 15, 30, 45, 60],
             )
 
@@ -484,24 +521,191 @@ with tab2:
             st.session_state["best_scenario"] = best
             st.session_state["df_ot_summary"] = df_ot_summary
 
-        if st.session_state["df_scenarios"] is not None and not st.session_state["df_scenarios"].empty:
+        if (
+            st.session_state["df_scenarios"] is not None
+            and not st.session_state["df_scenarios"].empty
+        ):
             best = st.session_state["best_scenario"]
             df_top3 = st.session_state["df_scenarios"]
             df_ot_summary = st.session_state.get("df_ot_summary")
+
             c1, c2, c3, c4 = st.columns(4)
             if best is not None:
                 c1.metric("Meilleur scénario – Production", int(best["Production"]))
-                c2.metric("Meilleur scénario – Latence cible", int(best["Latence cible acceptée (min)"]))
-                c3.metric("Meilleur scénario – Latence moy", round(best["Latence moy"], 2))
-                c4.metric("Meilleur scénario – Taux four (%)", round(best["Taux four (%)"], 1))
-                st.success(f"Meilleur scénario : pause {best['Pause (min)']} min matin + soir | ordre {best['Ordre bras']} | latence cible acceptée {best['Latence cible acceptée (min)']} min | production {best['Production']} | latence moy {best['Latence moy']:.2f} | latence max obs {best['Latence max observée']:.2f} | taux four {best['Taux four (%)']:.1f}%")
+                c2.metric(
+                    "Meilleur scénario – Latence cible",
+                    int(best["Latence cible acceptée (min)"]),
+                )
+                c3.metric(
+                    "Meilleur scénario – Latence moy",
+                    round(best["Latence moy"], 2),
+                )
+                c4.metric(
+                    "Meilleur scénario – Taux four (%)",
+                    round(best["Taux four (%)"], 1),
+                )
 
-            st.subheader("Les 3 meilleurs scénarios (1 par niveau de pause)")
-            columns_to_show = ["Pause (min)", "Ordre bras", "Latence cible acceptée (min)", "Production", "Latence moy", "Latence max observée", "Taux four (%)", "Mode optimisation"]
+                st.success(
+                    f"Meilleur scénario : pause {best['Pause (min)']} min matin + soir | "
+                    f"ordre {best['Ordre bras']} | "
+                    f"latence cible acceptée {best['Latence cible acceptée (min)']} min | "
+                    f"production {best['Production']} | "
+                    f"latence moy {best['Latence moy']:.2f} | "
+                    f"latence max obs {best['Latence max observée']:.2f} | "
+                    f"taux four {best['Taux four (%)']:.1f}%"
+                )
+
+            st.subheader("Cliquez directement sur un scénario")
+
+            columns_to_show = [
+                "Pause (min)",
+                "Ordre bras",
+                "Latence cible acceptée (min)",
+                "Production",
+                "Latence moy",
+                "Latence max observée",
+                "Taux four (%)",
+                "Mode optimisation",
+            ]
             cols_exist = [c for c in columns_to_show if c in df_top3.columns]
-            st.dataframe(df_top3[cols_exist], use_container_width=True)
+            df_grid = df_top3[cols_exist].copy()
+
+            gb = GridOptionsBuilder.from_dataframe(df_grid)
+            gb.configure_selection(selection_mode="single", use_checkbox=False)
+            gb.configure_grid_options(domLayout="normal")
+            grid_options = gb.build()
+
+            grid_response = AgGrid(
+                df_grid,
+                gridOptions=grid_options,
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                theme="streamlit",
+                fit_columns_on_grid_load=True,
+                height=240,
+                reload_data=True,
+            )
+
+            selected_rows = grid_response.get("selected_rows", [])
+            if isinstance(selected_rows, pd.DataFrame):
+                selected_rows = selected_rows.to_dict("records")
+
+            if selected_rows:
+                selected = selected_rows[0]
+
+                match = df_top3[
+                    (df_top3["Pause (min)"] == selected["Pause (min)"])
+                    & (df_top3["Ordre bras"] == selected["Ordre bras"])
+                    & (
+                        df_top3["Latence cible acceptée (min)"]
+                        == selected["Latence cible acceptée (min)"]
+                    )
+                ]
+
+                if not match.empty:
+                    scenario_row = match.iloc[0]
+
+                    pause_duration = int(scenario_row["Pause (min)"])
+                    latence_cible_selected = int(
+                        scenario_row["Latence cible acceptée (min)"]
+                    )
+                    mode_selected = scenario_row.get("Mode optimisation", mode_optim)
+
+                    arms_config_selected = {
+                        1: scenario_row["Bras 1"],
+                        2: scenario_row["Bras 2"],
+                        3: scenario_row["Bras 3"],
+                        4: scenario_row["Bras 4"],
+                    }
+
+                    pause_start_matin_min = (
+                        pause_matin_start.hour * 60 + pause_matin_start.minute
+                    )
+                    pause_start_soir_min = (
+                        pause_soir_start.hour * 60 + pause_soir_start.minute
+                    )
+
+                    pause_windows_selected = []
+                    if pause_duration > 0:
+                        pause_windows_selected = [
+                            (
+                                pause_start_matin_min,
+                                pause_start_matin_min + pause_duration,
+                            ),
+                            (
+                                pause_start_soir_min,
+                                pause_start_soir_min + pause_duration,
+                            ),
+                        ]
+
+                    arbitration_weights = WEIGHT_PROFILES.get(
+                        mode_selected, WEIGHT_PROFILES["Équilibre"]
+                    )["plan"]
+
+                    cfg_selected = PRMSimulationConfig(
+                        prm_name=selected_prm,
+                        start_time=start_time,
+                        end_time=end_time,
+                        arms_config=arms_config_selected,
+                        cycle_times=cycle_times_all[selected_prm],
+                        first_arm=st.session_state.get(
+                            f"first_arm_{selected_prm}",
+                            DEFAULT_FIRST_ARMS[selected_prm],
+                        ),
+                        send_gap_min=send_gap_min,
+                        latence_max=latence_limite_optim,
+                        latence_cible=latence_cible_selected,
+                        deco_gap_min=deco_gap_min,
+                        four_gap_min=FOUR_GAP_MIN,
+                        pause_windows=pause_windows_selected,
+                        arbitration_weights=arbitration_weights,
+                    )
+
+                    try:
+                        df_detail = simulate_prm(cfg_selected)
+                        kpis_detail = compute_prm_kpis(df_detail, start_time, end_time)
+
+                        st.subheader("Détail du scénario sélectionné")
+
+                        d1, d2, d3, d4 = st.columns(4)
+                        d1.metric("Production", kpis_detail["production"])
+                        d2.metric("Taux four (%)", kpis_detail["taux_four"])
+                        d3.metric("Latence moy", kpis_detail["latence_moy"])
+                        d4.metric("Latence max", kpis_detail["latence_max_obs"])
+
+                        st.dataframe(
+                            format_simulation_df(df_detail),
+                            use_container_width=True,
+                        )
+
+                        st.subheader("Gantt du scénario sélectionné")
+                        gantt_detail = build_gantt_source(df_detail)
+
+                        fig_detail = px.timeline(
+                            gantt_detail,
+                            x_start="Start",
+                            x_end="Finish",
+                            y="Task",
+                            color="Type",
+                            color_discrete_map={
+                                "Four": "green",
+                                "Refroidissement": "blue",
+                                "Avant déco": "orange",
+                                "Déco": "purple",
+                                "LATENCE": "red",
+                            },
+                        )
+                        fig_detail.update_yaxes(autorange="reversed")
+                        fig_detail.update_layout(xaxis=dict(tickformat="%H:%M"))
+                        st.plotly_chart(fig_detail, use_container_width=True)
+
+                    except Exception:
+                        import traceback
+                        st.error("Erreur lors de la reconstruction du scénario cliqué")
+                        st.code(traceback.format_exc(), language="python")
+
             if df_ot_summary is not None and not df_ot_summary.empty:
                 st.subheader("Synthèse overtime du meilleur scénario")
                 st.dataframe(df_ot_summary, use_container_width=True)
+
         elif st.session_state["df_scenarios"] is not None:
             st.warning("Aucun scénario n'a pu être évalué.")
