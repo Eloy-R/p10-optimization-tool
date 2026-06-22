@@ -7,6 +7,21 @@ from simulation import PRMSimulationConfig, compute_prm_kpis, simulate_prm
 
 FOUR_GAP_MIN = 1
 
+WEIGHT_PROFILES = {
+    "Production max": {
+        "plan": {"target_penalty": 0.8, "latency": 0.15, "start_delay": 4.0, "cycle_span": 0.05},
+        "scenario": {"prod": 1200.0, "lat_moy": 8.0, "lat_max": 2.0, "taux_four": 1.5, "pause": 0.1, "lat_cible": 0.05},
+    },
+    "Équilibre": {
+        "plan": {"target_penalty": 1.5, "latency": 0.6, "start_delay": 2.0, "cycle_span": 0.15},
+        "scenario": {"prod": 900.0, "lat_moy": 25.0, "lat_max": 6.0, "taux_four": 1.2, "pause": 0.1, "lat_cible": 0.12},
+    },
+    "Latence faible": {
+        "plan": {"target_penalty": 3.5, "latency": 1.8, "start_delay": 0.8, "cycle_span": 0.25},
+        "scenario": {"prod": 500.0, "lat_moy": 80.0, "lat_max": 18.0, "taux_four": 0.8, "pause": 0.1, "lat_cible": 0.25},
+    },
+}
+
 
 def _unique_orders_from_current_mix(arms_config: dict) -> List[Tuple[str, str, str, str]]:
     base_order = [arms_config[1], arms_config[2], arms_config[3], arms_config[4]]
@@ -24,22 +39,23 @@ def _build_arms_config_from_order(order: Tuple[str, str, str, str]) -> Dict[int,
 
 
 def _compute_multi_criteria_score(row: pd.Series, mode_optim: str) -> float:
-    production = float(row["Production"])
-    lat_moy = float(row["Latence moy"])
-    lat_max_obs = float(row["Latence max observée"])
-    taux_four = float(row["Taux four (%)"])
-    pause = float(row["Pause (min)"])
-    latence_cible = float(row["Latence cible acceptée (min)"])
-    if mode_optim == "Production max":
-        return round(production * 1000 - lat_moy * 20 - lat_max_obs * 5 + taux_four * 0.5 - pause * 0.1 - latence_cible * 0.2, 3)
-    if mode_optim == "Latence faible":
-        return round(production * 350 - lat_moy * 80 - lat_max_obs * 30 + taux_four * 0.6 - pause * 0.1 - latence_cible * 0.5, 3)
-    return round(production * 700 - lat_moy * 45 - lat_max_obs * 15 + taux_four * 1.0 - pause * 0.1 - latence_cible * 0.3, 3)
+    profile = WEIGHT_PROFILES.get(mode_optim, WEIGHT_PROFILES["Équilibre"])["scenario"]
+    return round(
+        profile["prod"] * float(row["Production"])
+        - profile["lat_moy"] * float(row["Latence moy"])
+        - profile["lat_max"] * float(row["Latence max observée"])
+        + profile["taux_four"] * float(row["Taux four (%)"])
+        - profile["pause"] * float(row["Pause (min)"])
+        - profile["lat_cible"] * float(row["Latence cible acceptée (min)"]),
+        3,
+    )
 
 
 def evaluate_optimization(prm_name: str, start_time: int, end_time: int, base_config: dict, latence_values: List[int], send_gap_min: int, deco_gap_min: int, pause_start_matin: int, pause_start_aprem: int, pause_durations: List[int], mode_optim: str = "Équilibre", latence_limite_process: int = 20):
+    profile = WEIGHT_PROFILES.get(mode_optim, WEIGHT_PROFILES["Équilibre"])
     unique_orders = _unique_orders_from_current_mix(base_config["arms_config"])
     records = []
+
     for pause_duration in pause_durations:
         pause_windows = _pause_windows_from_duration(pause_start_matin, pause_start_aprem, pause_duration)
         for order in unique_orders:
@@ -59,6 +75,7 @@ def evaluate_optimization(prm_name: str, start_time: int, end_time: int, base_co
                     deco_gap_min=deco_gap_min,
                     four_gap_min=FOUR_GAP_MIN,
                     pause_windows=pause_windows,
+                    arbitration_weights=profile["plan"],
                 )
                 df = simulate_prm(cfg)
                 kpis = compute_prm_kpis(df, start_time, end_time)
@@ -76,12 +93,15 @@ def evaluate_optimization(prm_name: str, start_time: int, end_time: int, base_co
                     "Taux four (%)": round(float(kpis["taux_four"]), 3),
                     "Mode optimisation": mode_optim,
                 })
+
     df_scenarios = pd.DataFrame(records)
     if df_scenarios.empty:
         return df_scenarios, None
+
     df_scenarios = df_scenarios[df_scenarios["Latence max observée"] <= latence_limite_process].copy()
     if df_scenarios.empty:
         return df_scenarios, None
+
     df_scenarios["Score multicritère"] = df_scenarios.apply(lambda row: _compute_multi_criteria_score(row, mode_optim), axis=1)
     df_scenarios = df_scenarios.sort_values(by=["Score multicritère", "Production", "Latence moy", "Taux four (%)"], ascending=[False, False, True, False]).reset_index(drop=True)
     df_scenarios["Rang global"] = range(1, len(df_scenarios) + 1)
@@ -97,6 +117,9 @@ def evaluate_overtime_summary_from_best(best_scenario: Optional[dict], prm_name:
     pause_windows = _pause_windows_from_duration(pause_start_matin, pause_start_aprem, pause_duration)
     arms_config = {1: best_scenario["Bras 1"], 2: best_scenario["Bras 2"], 3: best_scenario["Bras 3"], 4: best_scenario["Bras 4"]}
     latence_cible = int(best_scenario["Latence cible acceptée (min)"])
+    mode_optim = best_scenario.get("Mode optimisation", "Équilibre")
+    profile = WEIGHT_PROFILES.get(mode_optim, WEIGHT_PROFILES["Équilibre"])
+
     rows = []
     for overtime in overtime_values:
         cfg = PRMSimulationConfig(
@@ -112,6 +135,7 @@ def evaluate_overtime_summary_from_best(best_scenario: Optional[dict], prm_name:
             deco_gap_min=deco_gap_min,
             four_gap_min=FOUR_GAP_MIN,
             pause_windows=pause_windows,
+            arbitration_weights=profile["plan"],
         )
         df = simulate_prm(cfg)
         kpis = compute_prm_kpis(df, start_time, end_time + overtime)
