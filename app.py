@@ -302,10 +302,12 @@ with tab1:
         try:
             cfg = PRMSimulationConfig(**cfg_kwargs)
             st.success("✅ cfg créé correctement")
-        except Exception as e:
-            st.error("❌ Erreur exacte à la création de cfg")
-            st.code(repr(e), language="text")
-            st.stop()
+        except Exception as e:  
+            import traceback
+                st.error("❌ Erreur détaillée dans simulate_prm")
+                st.code(traceback.format_exc(), language="python")
+                st.stop()
+
     
         # ✅ maintenant on teste simulation
         try:
