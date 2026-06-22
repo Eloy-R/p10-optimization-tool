@@ -279,8 +279,9 @@ with tab1:
             available_products,
             DEFAULT_FIRST_ARMS[selected_prm],
         )
+    
     if st.button("Lancer la simulation", type="primary"):
-
+    
         cfg_kwargs = {
             "prm_name": selected_prm,
             "start_time": start_time,
@@ -297,19 +298,18 @@ with tab1:
         }
     
         st.write("DEBUG cfg_kwargs :", cfg_kwargs)
-        st.write("DEBUG types :", {k: str(type(v)) for k, v in cfg_kwargs.items()})
-
+    
         try:
             cfg = PRMSimulationConfig(**cfg_kwargs)
             st.success("✅ cfg créé correctement")
-        except Exception as e:  
-            import traceback
-                st.error("❌ Erreur détaillée dans simulate_prm")
-                st.code(traceback.format_exc(), language="python")
-                st.stop()
-
     
-        # ✅ maintenant on teste simulation
+        except Exception as e:
+            import traceback
+            st.error("❌ Erreur création cfg")
+            st.code(traceback.format_exc(), language="python")
+            st.stop()
+    
+        # ✅ simulation ici (même indentation !)
         try:
             df_raw = simulate_prm(cfg)
             df_view = format_simulation_df(df_raw)
@@ -322,8 +322,6 @@ with tab1:
             st.session_state["kpis"] = kpis
             st.session_state["selected_prm"] = selected_prm
             st.session_state["process_time_slider"] = start_time
-            st.session_state["process_step_widget"] = 10
-            st.session_state["process_autoplay_widget"] = False
             st.session_state["_next_process_time"] = None
     
         except ScenarioInfeasibleError as e:
@@ -332,9 +330,11 @@ with tab1:
             st.stop()
     
         except Exception as e:
-            st.error("❌ Erreur dans simulate_prm")
-            st.code(repr(e), language="text")
+            import traceback
+            st.error("❌ ERREUR simulate_prm")
+            st.code(traceback.format_exc(), language="python")
             st.stop()
+
             
 
     if st.session_state["df_view"] is not None and st.session_state["selected_prm"] == selected_prm:
