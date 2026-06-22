@@ -283,6 +283,15 @@ with tab1:
         if st.button("Lancer la simulation", type="primary"):
             # Simulation stable : la latence pilotée par l'UI sert à l'optimisation,
             # pas à forcer la simulation. On garde ici une configuration neutre.
+        
+    
+    import inspect
+    import simulation
+    
+    st.write("Fichier réellement chargé :", simulation.__file__)
+    st.write("Signature réellement chargée :", inspect.signature(PRMSimulationConfig))
+
+
             cfg = PRMSimulationConfig(
                 prm_name=selected_prm,
                 start_time=start_time,
