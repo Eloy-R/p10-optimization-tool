@@ -281,7 +281,7 @@ with tab1:
         )
 
     if st.button("Lancer la simulation", type="primary"):
-            cfg_kwargs = {
+       cfg_kwargs = {
                 "prm_name": selected_prm,
                 "start_time": start_time,
                 "end_time": end_time,
@@ -296,16 +296,16 @@ with tab1:
                 "pause_windows": pause_windows,
             }
         
-            st.write("DEBUG cfg_kwargs :", cfg_kwargs)
-            st.write("DEBUG types :", {k: str(type(v)) for k, v in cfg_kwargs.items()})
-
-    try:
-        cfg = PRMSimulationConfig(**cfg_kwargs)
-        st.success("cfg créé correctement")
-    except Exception as e:
-        st.error("Erreur exacte à la création de cfg")
-        st.code(repr(e), language="text")
-        st.stop()
+        st.write("DEBUG cfg_kwargs :", cfg_kwargs)
+        st.write("DEBUG types :", {k: str(type(v)) for k, v in cfg_kwargs.items()})
+     
+        try:
+            cfg = PRMSimulationConfig(**cfg_kwargs)
+            st.success("cfg créé correctement")
+        except Exception as e:
+            st.error("Erreur exacte à la création de cfg")
+            st.code(repr(e), language="text")
+            st.stop()
 
             try:
                 df_raw = simulate_prm(cfg)
