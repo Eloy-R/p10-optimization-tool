@@ -163,7 +163,6 @@ for key, value in DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
-
 st.title("Simulateur et optimisation de la ligne P10")
 
 with st.sidebar:
@@ -201,35 +200,17 @@ with st.sidebar:
 
     col1, col2 = st.columns(2)
     with col1:
-        pause_matin_start = st.time_input(
-            "Début pause matin",
-            value=pd.Timestamp("12:00").to_pydatetime().time(),
-        )
-        pause_soir_start = st.time_input(
-            "Début pause soir",
-            value=pd.Timestamp("15:00").to_pydatetime().time(),
-        )
+        pause_matin_start = st.time_input("Début pause matin", value=pd.Timestamp("12:00").to_pydatetime().time())
+        pause_soir_start = st.time_input("Début pause soir", value=pd.Timestamp("15:00").to_pydatetime().time())
     with col2:
-        pause_matin_end = st.time_input(
-            "Fin pause matin",
-            value=pd.Timestamp("13:00").to_pydatetime().time(),
-        )
-        pause_soir_end = st.time_input(
-            "Fin pause soir",
-            value=pd.Timestamp("16:00").to_pydatetime().time(),
-        )
+        pause_matin_end = st.time_input("Fin pause matin", value=pd.Timestamp("13:00").to_pydatetime().time())
+        pause_soir_end = st.time_input("Fin pause soir", value=pd.Timestamp("16:00").to_pydatetime().time())
 
     pause_windows = []
     if pause_matin_active:
-        pause_windows.append((
-            pause_matin_start.hour * 60 + pause_matin_start.minute,
-            pause_matin_end.hour * 60 + pause_matin_end.minute,
-        ))
+        pause_windows.append((pause_matin_start.hour * 60 + pause_matin_start.minute, pause_matin_end.hour * 60 + pause_matin_end.minute))
     if pause_soir_active:
-        pause_windows.append((
-            pause_soir_start.hour * 60 + pause_soir_start.minute,
-            pause_soir_end.hour * 60 + pause_soir_end.minute,
-        ))
+        pause_windows.append((pause_soir_start.hour * 60 + pause_soir_start.minute, pause_soir_end.hour * 60 + pause_soir_end.minute))
 
 
 tab1, tab2, tab3 = st.tabs(["Simulation", "Optimisation", "Table des temps"])
@@ -260,11 +241,7 @@ with tab1:
     if not available_products:
         st.warning("Aucun produit défini pour cette PRM dans la table des temps.")
     else:
-        first_arm, arms_config = build_prm_form(
-            selected_prm,
-            available_products,
-            DEFAULT_FIRST_ARMS[selected_prm],
-        )
+        first_arm, arms_config = build_prm_form(selected_prm, available_products, DEFAULT_FIRST_ARMS[selected_prm])
 
         if st.button("Lancer la simulation", type="primary"):
             cfg = PRMSimulationConfig(
@@ -306,7 +283,7 @@ with tab1:
                 st.error("Scénario infaisable : les contraintes process ne peuvent pas être respectées avec les paramètres actuels.")
                 st.code(str(e), language="text")
 
-            except Exception as e:
+            except Exception:
                 import traceback
                 st.session_state["df_raw"] = None
                 st.session_state["df_view"] = None
@@ -327,7 +304,6 @@ with tab1:
 
         st.subheader("Production par produit")
         st.write(kpis["par_produit"])
-
         st.subheader("Détail simulation")
         st.dataframe(st.session_state["df_view"], use_container_width=True)
 
@@ -351,11 +327,9 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Vue process dans la journée")
-
         if st.session_state["_next_process_time"] is not None:
             st.session_state["process_time_slider"] = st.session_state["_next_process_time"]
             st.session_state["_next_process_time"] = None
-
         if st.session_state["process_time_slider"] is None:
             st.session_state["process_time_slider"] = start_time
 
@@ -371,12 +345,7 @@ with tab1:
         with c3:
             autoplay = st.toggle("Lecture automatique", key="process_autoplay_widget")
 
-        current_value_aligned = align_minute_to_step(
-            st.session_state["process_time_slider"],
-            start_min=start_time,
-            end_min=end_time,
-            step_min=step_min,
-        )
+        current_value_aligned = align_minute_to_step(st.session_state["process_time_slider"], start_min=start_time, end_min=end_time, step_min=step_min)
         st.session_state["process_time_slider"] = current_value_aligned
 
         current_minute = st.slider(
@@ -387,7 +356,6 @@ with tab1:
             step=step_min,
             key="process_time_slider",
         )
-
         current_minute = align_minute_to_step(current_minute, start_min=start_time, end_min=end_time, step_min=step_min)
 
         st.markdown(
@@ -400,15 +368,8 @@ with tab1:
         )
 
         process_state = get_process_state_at_time(st.session_state["df_raw"], current_minute)
-
         zone_cols = st.columns(5)
-        zones = [
-            ("Four", zone_cols[0]),
-            ("Refroid. Z1", zone_cols[1]),
-            ("Refroid. Z2", zone_cols[2]),
-            ("Avant déco", zone_cols[3]),
-            ("Déco", zone_cols[4]),
-        ]
+        zones = [("Four", zone_cols[0]), ("Refroid. Z1", zone_cols[1]), ("Refroid. Z2", zone_cols[2]), ("Avant déco", zone_cols[3]), ("Déco", zone_cols[4])]
         for zone_name, col in zones:
             with col:
                 st.markdown(f"### {zone_name}")
@@ -435,16 +396,10 @@ with tab1:
             mix_df=st.session_state.get("df_mix"),
             cycle_times_df=st.session_state["cycle_times_all"],
         )
-        st.download_button(
-            "Télécharger Excel",
-            data=excel_bytes,
-            file_name=f"simulation_{selected_prm}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        st.download_button("Télécharger Excel", data=excel_bytes, file_name=f"simulation_{selected_prm}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tab2:
     st.header(f"Optimisation – {PRM_LABELS[selected_prm]}")
-
     cycle_times_all = cycle_times_from_editor(st.session_state["cycle_times_all"])
     available_products = list(cycle_times_all.get(selected_prm, {}).keys())
 
@@ -457,16 +412,9 @@ with tab2:
             index=1,
             help="Production max = priorité au volume ; Équilibre = compromis production / latence / taux four ; Latence faible = priorité à la qualité process.",
         )
-
-        st.write(
-            "L'optimisation compare : les pauses (0 / 30 / 60 min matin + soir), les permutations du mix actuellement choisi sur les 4 bras, et plusieurs latences cibles acceptées."
-        )
-        st.write(
-            f"La limite dure process reste fixée à {latence_limite_optim} min : aucune proposition ne dépassera cette valeur."
-        )
-        st.write(
-            "Le tableau reprend uniquement 3 scénarios : le meilleur pour 0 min, 30 min et 60 min de pause."
-        )
+        st.write("L'optimisation compare : les pauses (0 / 30 / 60 min matin + soir), les permutations du mix actuellement choisi sur les 4 bras, et plusieurs latences cibles acceptées.")
+        st.write(f"La limite dure process reste fixée à {latence_limite_optim} min : aucune proposition ne dépassera cette valeur.")
+        st.write("Le tableau reprend uniquement 3 scénarios : le meilleur pour 0 min, 30 min et 60 min de pause.")
 
         if st.button("Lancer l'optimisation"):
             base_config = {
@@ -477,15 +425,10 @@ with tab2:
                     4: st.session_state.get(f"{selected_prm}_arm_4", available_products[min(3, len(available_products) - 1)]),
                 },
                 "cycle_times": cycle_times_all[selected_prm],
-                "first_arm": st.session_state.get(
-                    f"first_arm_{selected_prm}",
-                    DEFAULT_FIRST_ARMS[selected_prm],
-                ),
+                "first_arm": st.session_state.get(f"first_arm_{selected_prm}", DEFAULT_FIRST_ARMS[selected_prm]),
             }
-
             pause_start_matin = pause_matin_start.hour * 60 + pause_matin_start.minute
             pause_start_soir = pause_soir_start.hour * 60 + pause_soir_start.minute
-
             latence_values = [v for v in [0, 2, 4, 6, 8, 10, 15, 20] if v <= latence_limite_optim]
             if latence_limite_optim not in latence_values:
                 latence_values.append(latence_limite_optim)
@@ -538,36 +481,20 @@ with tab2:
             best = st.session_state["best_scenario"]
             df_top3 = st.session_state["df_scenarios"]
             df_ot_summary = st.session_state.get("df_ot_summary")
-
             c1, c2, c3, c4 = st.columns(4)
             if best is not None:
                 c1.metric("Meilleur scénario – Production", int(best["Production"]))
                 c2.metric("Meilleur scénario – Latence cible", int(best["Latence cible acceptée (min)"]))
                 c3.metric("Meilleur scénario – Latence moy", round(best["Latence moy"], 2))
                 c4.metric("Meilleur scénario – Taux four (%)", round(best["Taux four (%)"], 1))
-
-            if best is not None:
-                st.success(
-                    f"Meilleur scénario : pause {best['Pause (min)']} min matin + soir | ordre {best['Ordre bras']} | latence cible acceptée {best['Latence cible acceptée (min)']} min | production {best['Production']} | latence moy {best['Latence moy']:.2f} | latence max obs {best['Latence max observée']:.2f} | taux four {best['Taux four (%)']:.1f}%"
-                )
+                st.success(f"Meilleur scénario : pause {best['Pause (min)']} min matin + soir | ordre {best['Ordre bras']} | latence cible acceptée {best['Latence cible acceptée (min)']} min | production {best['Production']} | latence moy {best['Latence moy']:.2f} | latence max obs {best['Latence max observée']:.2f} | taux four {best['Taux four (%)']:.1f}%")
 
             st.subheader("Les 3 meilleurs scénarios (1 par niveau de pause)")
-            columns_to_show = [
-                "Pause (min)",
-                "Ordre bras",
-                "Latence cible acceptée (min)",
-                "Production",
-                "Latence moy",
-                "Latence max observée",
-                "Taux four (%)",
-                "Mode optimisation",
-            ]
+            columns_to_show = ["Pause (min)", "Ordre bras", "Latence cible acceptée (min)", "Production", "Latence moy", "Latence max observée", "Taux four (%)", "Mode optimisation"]
             cols_exist = [c for c in columns_to_show if c in df_top3.columns]
             st.dataframe(df_top3[cols_exist], use_container_width=True)
-
             if df_ot_summary is not None and not df_ot_summary.empty:
                 st.subheader("Synthèse overtime du meilleur scénario")
                 st.dataframe(df_ot_summary, use_container_width=True)
-
         elif st.session_state["df_scenarios"] is not None:
             st.warning("Aucun scénario n'a pu être évalué.")
